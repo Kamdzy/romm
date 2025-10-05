@@ -1,0 +1,226 @@
+name: Mirror Upstream Releases
+
+on:
+  schedule:
+    # Check for new releases every 6 hours
+    - cron: "0 */6 * * *"
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  check-upstream-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.3.0
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Get latest upstream release
+        id: upstream
+        run: |
+          UPSTREAM_RELEASE=$(curl -s https://api.github.com/repos/rommapp/romm/releases/latest | jq -r '.tag_name')
+          echo "Latest upstream release: $UPSTREAM_RELEASE"
+          echo "tag=$UPSTREAM_RELEASE" >> $GITHUB_OUTPUT
+
+          RELEASE_NAME=$(curl -s https://api.github.com/repos/rommapp/romm/releases/latest | jq -r '.name')
+          echo "name=$RELEASE_NAME" >> $GITHUB_OUTPUT
+
+          RELEASE_BODY=$(curl -s https://api.github.com/repos/rommapp/romm/releases/latest | jq -r '.body')
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$RELEASE_BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          IS_PRERELEASE=$(curl -s https://api.github.com/repos/rommapp/romm/releases/latest | jq -r '.prerelease')
+          echo "prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
+
+      - name: Check if release exists in our repo
+        id: check
+        run: |
+          UPSTREAM_TAG="${{ steps.upstream.outputs.tag }}"
+          OUR_TAG="${UPSTREAM_TAG}-kam"
+
+          echo "our_tag=$OUR_TAG" >> $GITHUB_OUTPUT
+
+          # Check if the release already exists in our repository
+          if gh release view "$OUR_TAG" > /dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Release $OUR_TAG already exists in our repository"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Release $OUR_TAG does not exist in our repository"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Merge upstream changes
+        id: merge
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Add upstream remote if not already added
+          git remote add upstream https://github.com/rommapp/romm.git 2>/dev/null || true
+          git fetch upstream --tags
+
+          # Get the upstream tag
+          UPSTREAM_TAG="${{ steps.upstream.outputs.tag }}"
+
+          # Try to merge the upstream master branch (which contains the release)
+          git checkout master
+          git merge upstream/master --no-edit || {
+            echo "Merge conflict detected."
+            git merge --abort
+            echo "conflict=true" >> $GITHUB_OUTPUT
+            exit 1
+          }
+          echo "conflict=false" >> $GITHUB_OUTPUT
+
+      - name: Send Discord notification on merge conflict
+        if: failure() && steps.merge.outputs.conflict == 'true'
+        run: |
+          UPSTREAM_TAG="${{ steps.upstream.outputs.tag }}"
+          UPSTREAM_NAME="${{ steps.upstream.outputs.name }}"
+          OUR_TAG="${{ steps.check.outputs.our_tag }}"
+
+          curl -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"⚠️ Release Creation Failed - Merge Conflict\",
+                \"description\": \"Failed to create release **${UPSTREAM_NAME}** (${OUR_TAG}) due to merge conflicts with upstream.\",
+                \"color\": 15158332,
+                \"fields\": [
+                  {
+                    \"name\": \"Repository\",
+                    \"value\": \"[${{ github.repository }}](https://github.com/${{ github.repository }})\",
+                    \"inline\": true
+                  },
+                  {
+                    \"name\": \"Upstream Release\",
+                    \"value\": \"[${UPSTREAM_TAG}](https://github.com/rommapp/romm/releases/tag/${UPSTREAM_TAG})\",
+                    \"inline\": true
+                  },
+                  {
+                    \"name\": \"Workflow Run\",
+                    \"value\": \"[View Details](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\",
+                    \"inline\": false
+                  },
+                  {
+                    \"name\": \"Action Required\",
+                    \"value\": \"Manual merge required. Resolve conflicts locally, push changes, then manually create release ${OUR_TAG}.\",
+                    \"inline\": false
+                  }
+                ],
+                \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
+              }]
+            }" \
+            ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+      - name: Push merged changes
+        if: steps.check.outputs.exists == 'false' && steps.merge.outputs.conflict == 'false'
+        run: |
+          git push origin master
+
+      - name: Create release with our code
+        id: create_release
+        if: steps.check.outputs.exists == 'false' && steps.merge.outputs.conflict == 'false'
+        run: |
+          UPSTREAM_TAG="${{ steps.upstream.outputs.tag }}"
+          UPSTREAM_NAME="${{ steps.upstream.outputs.name }}"
+          OUR_TAG="${{ steps.check.outputs.our_tag }}"
+          IS_PRERELEASE="${{ steps.upstream.outputs.prerelease }}"
+
+          # Create the tag pointing to our current HEAD (which has our custom code merged with upstream)
+          git tag -a "$OUR_TAG" -m "Release $OUR_TAG - Based on upstream rommapp/romm $UPSTREAM_TAG"
+          git push origin "$OUR_TAG"
+
+          # Prepare release body with custom header
+          RELEASE_BODY=$(cat << 'EOF'
+          ## 🔀 Forked Release from rommapp/romm
+
+          This release is based on [upstream version ${{ steps.upstream.outputs.tag }}](https://github.com/rommapp/romm/releases/tag/${{ steps.upstream.outputs.tag }}) with custom modifications.
+
+          ### Custom Changes in this Fork:
+          - Enhanced Flashpoint metadata handler with improved game GUID extraction
+          - Custom Docker image configuration for `ghcr.io/kamdzy/romm`
+
+          ### Upstream Release Notes:
+
+          ---
+
+          ${{ steps.upstream.outputs.body }}
+          EOF
+          )
+
+          # Create the release using GitHub CLI with explicit target
+          PRERELEASE_FLAG=""
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          gh release create "$OUR_TAG" \
+            --repo "${{ github.repository }}" \
+            --target master \
+            --title "$UPSTREAM_NAME (Kamdzy Fork)" \
+            --notes "$RELEASE_BODY" \
+            $PRERELEASE_FLAG
+
+          echo "created=true" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
+    #   - name: Trigger build workflow
+    #     if: steps.create_release.outputs.created == 'true'
+    #     run: |
+    #       OUR_TAG="${{ steps.check.outputs.our_tag }}"
+          
+    #       gh workflow run build.yml \
+    #         --repo "${{ github.repository }}" \
+    #         --ref master \
+    #         --field tag_name="$OUR_TAG"
+    #     env:
+    #       GH_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Send Discord notification on successful release
+        if: success() && steps.create_release.outputs.created == 'true'
+        run: |
+          UPSTREAM_TAG="${{ steps.upstream.outputs.tag }}"
+          UPSTREAM_NAME="${{ steps.upstream.outputs.name }}"
+          OUR_TAG="${{ steps.check.outputs.our_tag }}"
+
+          curl -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"🚀 New Release Created Successfully\",
+                \"description\": \"Successfully created release **${UPSTREAM_NAME} (Kamdzy Fork)** based on upstream rommapp/romm with custom modifications.\",
+                \"color\": 3066993,
+                \"fields\": [
+                  {
+                    \"name\": \"Release Tag\",
+                    \"value\": \"[${OUR_TAG}](https://github.com/${{ github.repository }}/releases/tag/${OUR_TAG})\",
+                    \"inline\": true
+                  },
+                  {
+                    \"name\": \"Upstream Release\",
+                    \"value\": \"[${UPSTREAM_TAG}](https://github.com/rommapp/romm/releases/tag/${UPSTREAM_TAG})\",
+                    \"inline\": true
+                  },
+                  {
+                    \"name\": \"Docker Images\",
+                    \"value\": \"Building now... Will be available at:\n\`ghcr.io/kamdzy/romm:${OUR_TAG}\`\n\`ghcr.io/kamdzy/romm:latest\`\n\`ghcr.io/kamdzy/romm:latest-slim\`\",
+                    \"inline\": false
+                  },
+                  {
+                    \"name\": \"Workflow Run\",
+                    \"value\": \"[View Build Progress](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\",
+                    \"inline\": false
+                  }
+                ],
+                \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
+              }]
+            }" \
+            ${{ secrets.DISCORD_WEBHOOK_URL }}

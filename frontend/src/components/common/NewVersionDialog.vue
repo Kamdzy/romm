@@ -18,15 +18,20 @@ function dismissVersionBanner() {
 async function fetchLatestVersion() {
   try {
     const response = await fetch(
-      "https://api.github.com/repos/rommapp/romm/releases/latest",
+      "https://api.github.com/repos/kamdzy/romm/releases/latest",
     );
     const json = await response.json();
     GITHUB_VERSION.value = json.tag_name;
 
     const publishedAt = new Date(json.published_at);
+    
+    // Coerce versions to handle custom suffixes like -kam
+    const currentVersion = semver.coerce(VERSION);
+    const githubVersion = semver.coerce(json.tag_name);
+    
     latestVersionDismissed.value =
       // Hide if the version is not valid
-      !semver.valid(VERSION) ||
+      !currentVersion ||
       // Hide if the version is the same as the dismissed version
       json.tag_name === dismissedVersion.value ||
       // Hide if the version is less than 2 hours old
@@ -51,12 +56,13 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div v-if="semver.valid(VERSION)" class="pa-3 sticky-bottom">
+  <div v-if="semver.coerce(VERSION)" class="pa-3 sticky-bottom">
     <v-slide-y-transition>
       <v-card
         v-if="
           GITHUB_VERSION &&
-          semver.gt(GITHUB_VERSION, VERSION) &&
+          semver.coerce(GITHUB_VERSION) &&
+          semver.gt(semver.coerce(GITHUB_VERSION), semver.coerce(VERSION)) &&
           !latestVersionDismissed
         "
         class="pa-1 border-selected mx-auto"

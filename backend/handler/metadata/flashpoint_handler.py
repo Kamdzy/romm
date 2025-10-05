@@ -160,58 +160,137 @@ class FlashpointHandler(MetadataHandler):
 
         return bool(response)
 
+    def _extract_game_guid(self, search_term: str) -> str | None:
+        """
+        Extract the game GUID from a search term.
+        Examples:
+            62e21497-738d-0335-19b4-9df881f77fe1-1690492579053.zip -> 62e21497-738d-0335-19b4-9df881f77fe1
+            0711da81-2cbe-452f-8e53-4f5c41c6960c-1704594311120.zip -> 0711da81-2cbe-452f-8e53-4f5c41c6960c
+            06c0ee5f-8ce2-402b-9ead-964da44d93ce-1688641860398.zip -> 06c0ee5f-8ce2-402b-9ead-964da44d93ce
+        
+        :param search_term: The search term (filename).
+        :return: The stripped game GUID (first 5 segments) or None if not a valid GUID format.
+        """
+        import re
+        
+        # Remove file extension
+        name = search_term.rsplit('.', 1)[0] if '.' in search_term else search_term
+        
+        # Pattern to match a full UUID (8-4-4-4-12 hex digits) followed by optional timestamp
+        # Captures the first 5 segments only (8-4-4-4-12)
+        # Format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx-timestamp
+        guid_pattern = r'^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-\d+'
+        match = re.match(guid_pattern, name, re.IGNORECASE)
+        
+        if match:
+            return match.group(1)
+        
+        return name
+
     async def search_games(self, search_term: str) -> list[FlashpointGame]:
         """
-        Search for games in Flashpoint database.
+        Search for games in Flashpoint database using a 3-step mechanism:
+        1. Search by game GUID (stripped) or full name using id parameter
+        2. Fallback to smartSearch with full game name
+        3. Fallback to smartSearch using stripped game GUID
 
         :param search_term: The search term to look for.
         :return: A list of FlashpointGame objects.
         """
+        log.debug("Searching Flashpoint for: '%s'", search_term)
         try:
+            # Step 1: Try searching by game GUID if present
+            game_guid = self._extract_game_guid(search_term)
+            if game_guid:
+                # log.debug(f"Step 1: Searching Flashpoint by game GUID: {game_guid}")
+                response = await self._request(
+                    self.search_url,
+                    {
+                        "id": game_guid,
+                        "filter": "false",
+                    },
+                )
+                
+                if response:
+                    games_data = json.loads(response) if isinstance(response, str) else response
+                    if games_data and isinstance(games_data, list) and len(games_data) > 0:
+                        # log.debug(f"Found {len(games_data)} game(s) using game GUID")
+                        return self._parse_games_data(games_data)
+
+            # Step 2: Try smartSearch with full game name
+            # log.debug(f"Step 2: Searching Flashpoint by full name: {search_term}")
             response = await self._request(
                 self.search_url,
                 {
                     "smartSearch": search_term,
-                    "filter": "true",
+                    "filter": "false",
                 },
             )
 
-            if not response:
-                return []
+            if response:
+                games_data = json.loads(response) if isinstance(response, str) else response
+                if games_data and isinstance(games_data, list) and len(games_data) > 0:
+                    # log.debug(f"Found {len(games_data)} game(s) using full name smartSearch")
+                    return self._parse_games_data(games_data)
 
-            games_data = json.loads(response) if isinstance(response, str) else response
-
-            return [
-                FlashpointGame(
+            # Step 3: Try smartSearch with stripped game GUID
+            if game_guid:
+                # log.debug(f"Step 3: Searching Flashpoint by game GUID with smartSearch: {game_guid}")
+                response = await self._request(
+                    self.search_url,
                     {
-                        "id": game_data["id"],
-                        "title": game_data["title"],
-                        "original_description": game_data.get(
-                            "originalDescription", ""
-                        ),
-                        "platform": game_data.get("platform", ""),
-                        "library": game_data.get("library", ""),
-                        "series": game_data.get("series", []),
-                        "developer": game_data.get("developer", ""),
-                        "publisher": game_data.get("publisher", ""),
-                        "source": game_data.get("source", ""),
-                        "tags": game_data.get("tags", []),
-                        "date_added": game_data.get("dateAdded", ""),
-                        "date_modified": game_data.get("dateModified", ""),
-                        "play_mode": game_data.get("playMode", ""),
-                        "status": game_data.get("status", ""),
-                        "version": game_data.get("version", ""),
-                        "release_date": game_data.get("releaseDate", ""),
-                        "language": game_data.get("language", ""),
-                        "notes": game_data.get("notes", ""),
-                    }
+                        "smartSearch": game_guid,
+                        "filter": "false",
+                    },
                 )
-                for game_data in games_data
-            ]
+                
+                if response:
+                    games_data = json.loads(response) if isinstance(response, str) else response
+                    if games_data and isinstance(games_data, list) and len(games_data) > 0:
+                        # log.debug(f"Found {len(games_data)} game(s) using game GUID smartSearch")
+                        return self._parse_games_data(games_data)
+
+            # log.debug(f"No games found for search term: {search_term}")
+            return []
 
         except Exception as exc:
             log.error("Error searching Flashpoint API: %s", exc)
             return []
+
+    def _parse_games_data(self, games_data: list) -> list[FlashpointGame]:
+        """
+        Parse raw game data from API response into FlashpointGame objects.
+        
+        :param games_data: List of raw game data from API.
+        :return: List of FlashpointGame objects.
+        """
+        return [
+            FlashpointGame(
+                {
+                    "id": game_data["id"],
+                    "title": game_data["title"],
+                    "original_description": game_data.get(
+                        "originalDescription", ""
+                    ),
+                    "platform": game_data.get("platform", ""),
+                    "library": game_data.get("library", ""),
+                    "series": game_data.get("series", []),
+                    "developer": game_data.get("developer", ""),
+                    "publisher": game_data.get("publisher", ""),
+                    "source": game_data.get("source", ""),
+                    "tags": game_data.get("tags", []),
+                    "date_added": game_data.get("dateAdded", ""),
+                    "date_modified": game_data.get("dateModified", ""),
+                    "play_mode": game_data.get("playMode", ""),
+                    "status": game_data.get("status", ""),
+                    "version": game_data.get("version", ""),
+                    "release_date": game_data.get("releaseDate", ""),
+                    "language": game_data.get("language", ""),
+                    "notes": game_data.get("notes", ""),
+                }
+            )
+            for game_data in games_data
+        ]
 
     def get_platform(self, slug: str) -> FlashpointPlatform:
         """
@@ -245,7 +324,9 @@ class FlashpointHandler(MetadataHandler):
 
         # Normalize the search term
         search_term = fs_rom_handler.get_file_name_with_no_tags(fs_name)
-        search_term = self.normalize_search_term(search_term, remove_punctuation=False)
+        
+        # Don't normalize the search term to preserve GUID format
+        # search_term = self.normalize_search_term(search_term, remove_punctuation=False)
 
         # Search for games
         games = await self.search_games(search_term)
@@ -254,7 +335,30 @@ class FlashpointHandler(MetadataHandler):
             log.debug(f"Could not find '{search_term}' on Flashpoint")
             return FlashpointRom(flashpoint_id=None)
 
-        # Find the best match
+        # Check if search term contains a valid GUID
+        import re
+        guid_pattern = r'^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'
+        game_guid = self._extract_game_guid(search_term)
+        is_valid_guid = bool(game_guid and re.match(guid_pattern, game_guid, re.IGNORECASE))
+        
+        # If we have exactly 1 result and search term had a valid GUID, it's a GUID exact match
+        if len(games) == 1 and is_valid_guid:
+            best_game = games[0]
+            log.debug(
+                f"Found Flashpoint match for '{search_term}' -> '{best_game['title']}' (GUID exact match)"
+            )
+            return FlashpointRom(
+                flashpoint_id=best_game["id"],
+                name=best_game["title"],
+                summary=best_game["original_description"],
+                url_cover=f"https://infinity.unstable.life/images/Logos/{best_game['id'][:2]}/{best_game['id'][2:4]}/{best_game['id']}?type=jpg",
+                url_screenshots=[
+                    f"https://infinity.unstable.life/images/Screenshots/{best_game['id'][:2]}/{best_game['id'][2:4]}/{best_game['id']}?type=jpg"
+                ],
+                flashpoint_metadata=extract_flashpoint_metadata(best_game),
+            )
+
+        # Find the best match using similarity scoring (for name-based searches)
         game_names = [game["title"] for game in games]
         best_match, best_score = self.find_best_match(
             search_term,
@@ -306,7 +410,9 @@ class FlashpointHandler(MetadataHandler):
             return []
 
         search_term = fs_rom_handler.get_file_name_with_no_tags(fs_name)
-        search_term = self.normalize_search_term(search_term, remove_punctuation=False)
+        
+        # Don't normalize the search term to preserve GUID format
+        # search_term = self.normalize_search_term(search_term, remove_punctuation=False)
 
         games = await self.search_games(search_term)
         return [
@@ -341,7 +447,7 @@ class FlashpointHandler(MetadataHandler):
                 self.search_url,
                 {
                     "id": flashpoint_id,
-                    "filter": "true",
+                    "filter": "false",
                 },
             )
 

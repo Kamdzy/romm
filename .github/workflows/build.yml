@@ -6,6 +6,12 @@ on:
   #     - "[0-9]+.[0-9]+.[0-9]+*"
   release:
     types: [published]
+  workflow_dispatch: # Allow manual trigger
+    inputs:
+      tag_name:
+        description: "Release tag name (e.g., 4.3.1-kam)"
+        required: true
+        type: string
 
 permissions:
   id-token: write
@@ -18,12 +24,22 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       valid: ${{ steps.check_tag.outputs.valid }}
+      tag: ${{ steps.check_tag.outputs.tag }}
     steps:
       - name: Check if tag follows SemVer
         id: check_tag
         run: |
-          TAG="${{ github.event.release.tag_name }}"
-          if [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+|-beta\.[0-9]+|-rc\.[0-9]+)?$ ]]; then
+          # Get tag from release event or workflow_dispatch input
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="${{ inputs.tag_name }}"
+          fi
+
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+          # Accept X.Y.Z, X.Y.Z-alpha.N, X.Y.Z-beta.N, X.Y.Z-rc.N, or X.Y.Z-kam
+          if [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+|-beta\.[0-9]+|-rc\.[0-9]+|-kam)?$ ]]; then
             echo "valid=true" >> $GITHUB_OUTPUT
           else
             echo "valid=false" >> $GITHUB_OUTPUT
@@ -43,6 +59,8 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v4.3.0
+        with:
+          ref: ${{ needs.validate-tag-semver.outputs.tag || github.ref }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3.6.0
@@ -50,53 +68,47 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3.11.1
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3.5.0
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3.5.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
 
-      - name: Generate Docker metadata (slim)
-        id: meta-slim
-        uses: docker/metadata-action@v5.8.0
-        with:
-          images: |
-            name=rommapp/romm
-            name=ghcr.io/rommapp/romm
-          flavor: |
-            latest=auto
-            suffix=-slim,onlatest=true
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-          labels: |
-            org.opencontainers.image.version={{version}}-slim
-            org.opencontainers.image.title="rommapp/romm"
-            org.opencontainers.image.description="RomM (ROM Manager) allows you to scan, enrich, and browse your game collection with a clean and responsive interface. With support for multiple platforms, various naming schemes and custom tags, RomM is a must-have for anyone who plays on emulators."
-            org.opencontainers.image.licenses="AGPLv3"
+      # - name: Generate Docker metadata (slim)
+      #   id: meta-slim
+      #   uses: docker/metadata-action@v5.8.0
+      #   with:
+      #     images: |
+      #       name=ghcr.io/kamdzy/romm
+      #     flavor: |
+      #       latest=auto
+      #       suffix=-slim,onlatest=true
+      #     tags: |
+      #       type=semver,pattern={{version}}
+      #       type=semver,pattern={{major}}.{{minor}}
+      #       type=semver,pattern={{major}}
+      #       type=raw,value=latest-slim,enable=true
+      #     labels: |
+      #       org.opencontainers.image.version={{version}}-slim
+      #       org.opencontainers.image.title="kamdzy/romm"
+      #       org.opencontainers.image.description="RomM (ROM Manager) allows you to scan, enrich, and browse your game collection with a clean and responsive interface. With support for multiple platforms, various naming schemes and custom tags, RomM is a must-have for anyone who plays on emulators."
+      #       org.opencontainers.image.licenses="AGPLv3"
 
       - name: Generate Docker metadata (full)
         id: meta
         uses: docker/metadata-action@v5.8.0
         with:
           images: |
-            name=rommapp/romm
-            name=ghcr.io/rommapp/romm
+            name=ghcr.io/kamdzy/romm
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
+            type=raw,value=latest,enable=true
           labels: |
             org.opencontainers.image.version={{version}}
-            org.opencontainers.image.title="rommapp/romm"
+            org.opencontainers.image.title="kamdzy/romm"
             org.opencontainers.image.description="RomM (ROM Manager) allows you to scan, enrich, and browse your game collection with a clean and responsive interface. With support for multiple platforms, various naming schemes and custom tags, RomM is a must-have for anyone who plays on emulators."
             org.opencontainers.image.licenses="AGPLv3"
 
@@ -104,17 +116,17 @@ jobs:
         run: |
           sed -i 's/<version>/${{ steps.meta.outputs.version }}/' backend/__version__.py
 
-      - name: Build slim image
-        id: build-slim
-        uses: docker/build-push-action@v6.18.0
-        with:
-          file: docker/Dockerfile
-          context: .
-          push: true
-          platforms: linux/arm64,linux/amd64
-          tags: ${{ steps.meta-slim.outputs.tags }}
-          labels: ${{ steps.meta-slim.outputs.labels }}
-          target: slim-image
+      # - name: Build slim image
+      #   id: build-slim
+      #   uses: docker/build-push-action@v6.18.0
+      #   with:
+      #     file: docker/Dockerfile
+      #     context: .
+      #     push: true
+      #     platforms: linux/amd64
+      #     tags: ${{ steps.meta-slim.outputs.tags }}
+      #     labels: ${{ steps.meta-slim.outputs.labels }}
+      #     target: slim-image
 
       - name: Build full image
         id: build-full
@@ -123,34 +135,7 @@ jobs:
           file: docker/Dockerfile
           context: .
           push: true
-          platforms: linux/arm64,linux/amd64
+          platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           target: full-image
-
-  trigger-docs-and-web:
-    permissions:
-      actions: write
-    needs: build
-    runs-on: ubuntu-latest
-    if: needs.build.result == 'success' && github.event.release.prerelease == false
-    steps:
-      - name: Trigger docs build
-        run: |
-          curl -L -X POST \
-            -H "Accept: application/vnd.github.v3+json" \
-            -H "Authorization: Bearer ${DOCS_PAT}" \
-            "https://api.github.com/repos/rommapp/docs/actions/workflows/deploy.yml/dispatches" \
-            -d '{"ref":"main", "inputs": {"version": "${{ github.event.release.tag_name }}"}}'
-        env:
-          DOCS_PAT: ${{ secrets.DOCS_PAT }}
-
-      - name: Trigger website build
-        run: |
-          curl -L -X POST \
-            -H "Accept: application/vnd.github.v3+json" \
-            -H "Authorization: Bearer ${DOCS_PAT}" \
-            "https://api.github.com/repos/rommapp/marketing-site/actions/workflows/deploy.yml/dispatches" \
-            -d '{"ref":"main", "inputs": {"version": "${{ github.event.release.tag_name }}"}}'
-        env:
-          DOCS_PAT: ${{ secrets.DOCS_PAT }}
