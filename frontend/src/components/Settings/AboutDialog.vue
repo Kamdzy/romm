@@ -32,7 +32,7 @@ function closeDialog() {
           <v-divider class="my-2" />
           <v-hover v-slot="{ isHovering, props }">
             <a
-              :href="`https://github.com/rommapp/romm/releases/tag/${heartbeatStore.value.SYSTEM.VERSION}`"
+              :href="`https://github.com/kamdzy/romm/releases/tag/${heartbeatStore.value.SYSTEM.VERSION}`"
               target="_blank"
               rel="noopener noreferrer"
               class="text-decoration-none text-primary"
@@ -51,7 +51,7 @@ function closeDialog() {
           <v-divider class="my-2" />
           <v-hover v-slot="{ isHovering, props }">
             <a
-              href="https://github.com/rommapp/romm"
+              href="https://github.com/kamdzy/romm"
               target="_blank"
               rel="noopener noreferrer"
               class="text-decoration-none text-primary"
