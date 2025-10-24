@@ -36,6 +36,16 @@ jobs:
             TAG="${{ inputs.tag_name }}"
           fi
 
+          echo "Validating tag: $TAG"
+
+          # Check if TAG is empty or null
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "❌ Error: Tag is empty or null!"
+            echo "valid=false" >> $GITHUB_OUTPUT
+            echo "tag=" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 
           # Accept X.Y.Z, X.Y.Z-alpha.N, X.Y.Z-beta.N, X.Y.Z-rc.N, or X.Y.Z-kam
