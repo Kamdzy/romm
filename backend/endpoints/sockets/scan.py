@@ -186,16 +186,18 @@ def _should_scan_rom(
 
 
 def _should_get_rom_files(
-    scan_type: ScanType, rom: Rom | None, roms_ids: list[int]
+    scan_type: ScanType, rom: Rom, newly_added: bool, roms_ids: list[int]
 ) -> bool:
     """Decide if the files of a rom should be rebuilt or not
 
     Args:
         scan_type (ScanType): Type of scan to be performed.
-        rom (Rom | None): The rom to be rebuilt.
+        rom (Rom): The rom to be rebuilt.
+        newly_added (bool): Whether the rom is newly added.
+        roms_ids (list[int]): List of selected roms to be scanned.
     """
     return bool(
-        (scan_type in {ScanType.NEW_PLATFORMS, ScanType.QUICK} and not rom)
+        (scan_type in {ScanType.NEW_PLATFORMS, ScanType.QUICK} and newly_added)
         or (scan_type == ScanType.COMPLETE)
         or (scan_type == ScanType.HASHES)
         or (rom and rom.id in roms_ids)
@@ -273,8 +275,10 @@ async def _identify_rom(
         return
 
     # Build rom files object before scanning
-    should_update_props = _should_get_rom_files(scan_type, rom, roms_ids)
-    if should_update_props:
+    should_update_files = _should_get_rom_files(
+        scan_type=scan_type, rom=rom, newly_added=newly_added, roms_ids=roms_ids
+    )
+    if should_update_files:
         log.debug(f"Calculating file hashes for {rom.fs_name}...")
         rom_files, rom_crc_c, rom_md5_h, rom_sha1_h, rom_ra_h = (
             await fs_rom_handler.get_rom_files(rom)
@@ -317,7 +321,7 @@ async def _identify_rom(
             ),
         )
 
-    if should_update_props:
+    if should_update_files:
         # Delete the existing rom files in the DB
         db_rom_handler.purge_rom_files(_added_rom.id)
 
@@ -340,19 +344,43 @@ async def _identify_rom(
         for new_rom_file in new_rom_files:
             db_rom_handler.add_rom_file(new_rom_file)
 
-    if _added_rom.ra_metadata:
-        for ach in _added_rom.ra_metadata.get("achievements", []):
-            # Store both normal and locked version
-            badge_url_lock = ach.get("badge_url_lock", None)
-            badge_path_lock = ach.get("badge_path_lock", None)
-            if badge_url_lock and badge_path_lock:
-                await fs_resource_handler.store_ra_badge(
-                    badge_url_lock, badge_path_lock
-                )
-            badge_url = ach.get("badge_url", None)
-            badge_path = ach.get("badge_path", None)
-            if badge_url and badge_path:
-                await fs_resource_handler.store_ra_badge(badge_url, badge_path)
+    # Short circuit if the scan type is hashes
+    if scan_type == ScanType.HASHES:
+        return
+
+    path_cover_s, path_cover_l = await fs_resource_handler.get_cover(
+        entity=_added_rom,
+        overwrite=True,
+        url_cover=_added_rom.url_cover,
+    )
+
+    path_manual = await fs_resource_handler.get_manual(
+        rom=_added_rom,
+        overwrite=True,
+        url_manual=_added_rom.url_manual,
+    )
+
+    path_screenshots = await fs_resource_handler.get_rom_screenshots(
+        rom=_added_rom,
+        overwrite=True,
+        url_screenshots=_added_rom.url_screenshots,
+    )
+
+    _added_rom.path_cover_s = path_cover_s
+    _added_rom.path_cover_l = path_cover_l
+    _added_rom.path_screenshots = path_screenshots
+    _added_rom.path_manual = path_manual
+
+    # Update the scanned rom with the cover and screenshots paths and update database
+    db_rom_handler.update_rom(
+        _added_rom.id,
+        {
+            "path_cover_s": path_cover_s,
+            "path_cover_l": path_cover_l,
+            "path_screenshots": path_screenshots,
+            "path_manual": path_manual,
+        },
+    )
 
     # Handle special media files from Screenscraper
     if _added_rom.ss_metadata:
@@ -374,39 +402,19 @@ async def _identify_rom(
                     _added_rom.gamelist_metadata[f"{media_type.value}_path"],
                 )
 
-    path_cover_s, path_cover_l = await fs_resource_handler.get_cover(
-        entity=_added_rom,
-        overwrite=should_update_props,
-        url_cover=_added_rom.url_cover,
-    )
-
-    path_manual = await fs_resource_handler.get_manual(
-        rom=_added_rom,
-        overwrite=should_update_props,
-        url_manual=_added_rom.url_manual,
-    )
-
-    path_screenshots = await fs_resource_handler.get_rom_screenshots(
-        rom=_added_rom,
-        overwrite=should_update_props,
-        url_screenshots=_added_rom.url_screenshots,
-    )
-
-    _added_rom.path_cover_s = path_cover_s
-    _added_rom.path_cover_l = path_cover_l
-    _added_rom.path_screenshots = path_screenshots
-    _added_rom.path_manual = path_manual
-
-    # Update the scanned rom with the cover and screenshots paths and update database
-    db_rom_handler.update_rom(
-        _added_rom.id,
-        {
-            "path_cover_s": path_cover_s,
-            "path_cover_l": path_cover_l,
-            "path_screenshots": path_screenshots,
-            "path_manual": path_manual,
-        },
-    )
+    # Store normal and locked badges
+    if _added_rom.ra_metadata:
+        for ach in _added_rom.ra_metadata.get("achievements", []):
+            badge_url_lock = ach.get("badge_url_lock", None)
+            badge_path_lock = ach.get("badge_path_lock", None)
+            if badge_url_lock and badge_path_lock:
+                await fs_resource_handler.store_ra_badge(
+                    badge_url_lock, badge_path_lock
+                )
+            badge_url = ach.get("badge_url", None)
+            badge_path = ach.get("badge_path", None)
+            if badge_url and badge_path:
+                await fs_resource_handler.store_ra_badge(badge_url, badge_path)
 
     await socket_manager.emit(
         "scan:scanning_rom",
