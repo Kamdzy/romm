@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import HTTPException
 from fastapi import Path as PathVar
@@ -42,6 +43,27 @@ from handler.metadata.base_handler import UniversalPlatformSlug as UPS
 from models.rom import Rom, RomFile, RomFileCategory
 from utils.router import APIRouter
 
+
+def generate_rom_download_url(request: Request, rom: Rom) -> str:
+    return str(
+        request.url_for(
+            "get_rom_content",
+            id=rom.id,
+            file_name=quote(rom.fs_name, safe="/"),
+        )
+    )
+
+
+def generate_romfile_download_url(request: Request, file: RomFile) -> str:
+    return str(
+        request.url_for(
+            "get_romfile_content",
+            id=file.id,
+            file_name=quote(file.file_name, safe="/"),
+        )
+    )
+
+
 router = APIRouter(
     prefix="/feeds",
     tags=["feeds"],
@@ -74,18 +96,13 @@ def platforms_webrcade_feed(request: Request) -> WebrcadeFeedSchema:
         category_items = []
         roms = db_rom_handler.get_roms_scalar(platform_id=p.id)
         for rom in roms:
+            download_url = generate_rom_download_url(request, rom)
             category_item = WebrcadeFeedItemSchema(
                 title=rom.name or rom.fs_name_no_tags,
                 description=rom.summary or "",
                 type=WEBRCADE_SLUG_TO_TYPE_MAP.get(p.slug, p.slug),
                 props=WebrcadeFeedItemPropsSchema(
-                    rom=str(
-                        request.url_for(
-                            "get_rom_content",
-                            id=rom.id,
-                            file_name=rom.fs_name,
-                        )
-                    ),
+                    rom=download_url,
                 ),
             )
             if rom.path_cover_s:
@@ -195,13 +212,7 @@ async def tinfoil_index_feed(
     return TinfoilFeedSchema(
         files=[
             TinfoilFeedFileSchema(
-                url=str(
-                    request.url_for(
-                        "get_romfile_content",
-                        id=rom_file.id,
-                        file_name=rom_file.file_name,
-                    )
-                ),
+                url=generate_romfile_download_url(request, rom_file),
                 size=rom_file.file_size_bytes,
             )
             for rom in roms
@@ -253,16 +264,6 @@ def generate_content_id(file: RomFile) -> str:
     return f"UP9644-{file.id:09d}_00-0000000000000000"
 
 
-def generate_download_url(request: Request, file: RomFile) -> str:
-    return str(
-        request.url_for(
-            "get_romfile_content",
-            id=file.id,
-            file_name=file.file_name,
-        )
-    )
-
-
 @protected_route(
     router.get,
     "/pkgi/ps3/{content_type}",
@@ -303,13 +304,13 @@ def pkgi_ps3_feed(
                 continue
 
             content_id = generate_content_id(file)
-            download_url = generate_download_url(request, file)
+            download_url = generate_romfile_download_url(request, file)
 
             # Validate the item schema
             pkgi_item = PKGiFeedPS3ItemSchema(
                 contentid=content_id,
                 type=content_type_int,
-                name=file.file_name_no_tags.replace(",", " "),
+                name=file.file_name_no_tags,
                 description="",
                 rap="",
                 url=download_url,
@@ -318,7 +319,7 @@ def pkgi_ps3_feed(
             )
 
             # Format: contentid,type,name,description,rap,url,size,checksum
-            txt_line = f"{pkgi_item.contentid},{pkgi_item.type},{pkgi_item.name},{pkgi_item.description},{pkgi_item.rap},{pkgi_item.url},{pkgi_item.size},{pkgi_item.checksum}"
+            txt_line = f'{pkgi_item.contentid},{pkgi_item.type},"{pkgi_item.name}",{pkgi_item.description},{pkgi_item.rap},"{pkgi_item.url}",{pkgi_item.size},{pkgi_item.checksum}'
             txt_lines.append(txt_line)
 
     txt_content = "\n".join(txt_lines)
@@ -374,12 +375,12 @@ def pkgi_psvita_feed(
                 continue
 
             content_id = generate_content_id(file)
-            download_url = generate_download_url(request, file)
+            download_url = generate_romfile_download_url(request, file)
 
             pkgi_item = PKGiFeedPSVitaItemSchema(
                 contentid=content_id,
                 flags=0,
-                name=file.file_name_no_tags.replace(",", " "),
+                name=file.file_name_no_tags,
                 name2="",
                 zrif="",
                 url=download_url,
@@ -388,7 +389,7 @@ def pkgi_psvita_feed(
             )
 
             # Format: contentid,flags,name,name2,zrif,url,size,checksum
-            txt_line = f"{pkgi_item.contentid},{pkgi_item.flags},{pkgi_item.name},{pkgi_item.name2},{pkgi_item.zrif},{pkgi_item.url},{pkgi_item.size},{pkgi_item.checksum}"
+            txt_line = f'{pkgi_item.contentid},{pkgi_item.flags},"{pkgi_item.name}",{pkgi_item.name2},{pkgi_item.zrif},"{pkgi_item.url}",{pkgi_item.size},{pkgi_item.checksum}'
             txt_lines.append(txt_line)
 
     txt_content = "\n".join(txt_lines)
@@ -445,13 +446,13 @@ def pkgi_psp_feed(
                 continue
 
             content_id = generate_content_id(file)
-            download_url = generate_download_url(request, file)
+            download_url = generate_romfile_download_url(request, file)
 
             # Validate the item schema
             pkgi_item = PKGiFeedPSPItemSchema(
                 contentid=content_id,
                 type=content_type_int,
-                name=file.file_name_no_tags.replace(",", " "),
+                name=file.file_name_no_tags,
                 description="",
                 rap="",
                 url=download_url,
@@ -460,7 +461,7 @@ def pkgi_psp_feed(
             )
 
             # Format: contentid,type,name,description,rap,url,size,checksum
-            txt_line = f"{pkgi_item.contentid},{pkgi_item.type},{pkgi_item.name},{pkgi_item.description},{pkgi_item.rap},{pkgi_item.url},{pkgi_item.size},{pkgi_item.checksum}"
+            txt_line = f'{pkgi_item.contentid},{pkgi_item.type},"{pkgi_item.name}",{pkgi_item.description},{pkgi_item.rap},"{pkgi_item.url}",{pkgi_item.size},{pkgi_item.checksum}'
             txt_lines.append(txt_line)
 
     txt_content = "\n".join(txt_lines)
@@ -504,13 +505,7 @@ def kekatsu_ds_feed(request: Request, platform_slug: str) -> Response:
     txt_lines.append(",")
 
     for rom in roms:
-        download_url = str(
-            request.url_for(
-                "get_rom_content",
-                id=rom.id,
-                file_name=rom.fs_name,
-            )
-        )
+        download_url = generate_rom_download_url(request, rom)
 
         # Generate box art URL if cover exists
         box_art_url = ""
@@ -533,7 +528,7 @@ def kekatsu_ds_feed(request: Request, platform_slug: str) -> Response:
         )
 
         # Format: title,platform,region,version,author,download_url,filename,size,box_art_url
-        txt_line = f"{kekatsu_item.title},{kekatsu_item.platform},{kekatsu_item.region},{kekatsu_item.version},{kekatsu_item.author},{kekatsu_item.download_url},{kekatsu_item.filename},{kekatsu_item.size},{kekatsu_item.box_art_url}"
+        txt_line = f'"{kekatsu_item.title}",{kekatsu_item.platform},{kekatsu_item.region},{kekatsu_item.version},{kekatsu_item.author},"{kekatsu_item.download_url}","{kekatsu_item.filename}",{kekatsu_item.size},"{kekatsu_item.box_art_url}"'
         txt_lines.append(txt_line)
 
     txt_content = "\n".join(txt_lines)
