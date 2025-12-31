@@ -127,6 +127,7 @@ def with_details(func):
                 noload(Rom.platform), noload(Rom.metadatum)
             ),
             selectinload(Rom.collections),
+            selectinload(Rom.notes),
         )
         return func(*args, **kwargs)
 
@@ -151,6 +152,8 @@ def with_simple(func):
             selectinload(Rom.sibling_roms).options(
                 noload(Rom.platform), noload(Rom.metadatum)
             ),
+            # Show notes indicator on cards
+            selectinload(Rom.notes),
         )
         return func(*args, **kwargs)
 
