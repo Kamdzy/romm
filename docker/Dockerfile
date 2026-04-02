@@ -13,6 +13,7 @@
 
 
 # ARGUMENT DECLARATIONS
+ARG UV_EXCLUDE_NEWER=""
 ARG ALPINE_VERSION=3.23
 ARG ALPINE_SHA256=25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659
 ARG PYTHON_VERSION=3.13
@@ -45,6 +46,7 @@ FROM ghcr.io/astral-sh/uv:${UV_VERSION}-python${PYTHON_VERSION}-alpine@sha256:${
 
 # BACKEND PYTHON BUILD
 FROM python-alias AS backend-build
+ARG UV_EXCLUDE_NEWER
 
 # git is needed to install streaming-form-data fork
 # libpq-dev is needed to build psycopg-c
@@ -61,15 +63,18 @@ COPY --from=uv-stage /usr/local/bin/uv /usr/local/bin/uvx /bin/
 WORKDIR /src
 
 COPY ./pyproject.toml ./uv.lock /src/
-RUN uv sync --locked --no-cache
+RUN uv sync --frozen --no-cache \
+    ${UV_EXCLUDE_NEWER:+--exclude-newer "$UV_EXCLUDE_NEWER"}
 
 FROM backend-build AS backend-dev-build
+ARG UV_EXCLUDE_NEWER
 
 # linux-headers is needed to install psutil
 RUN apk add --no-cache \
     linux-headers
 
-RUN uv sync --locked --no-cache --all-extras
+RUN uv sync --frozen --no-cache --all-extras \
+    ${UV_EXCLUDE_NEWER:+--exclude-newer "$UV_EXCLUDE_NEWER"}
 
 
 # CUSTOM RAHASHER FOR RETROACHIEVEMENTS
