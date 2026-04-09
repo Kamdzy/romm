@@ -59,6 +59,8 @@ const DS_3DS_PLATFORMS = new Set([
   "nintendo-dsi",
   "3ds",
   "new-nintendo-3ds",
+  "psx",
+  "dc",
 ]);
 const PSP_PLATFORMS = new Set(["psp", "psp-minis"]);
 const SWITCH_PLATFORMS = new Set(["switch", "switch-2"]);
@@ -342,7 +344,6 @@ watch(
             <v-text-field
               v-model="updatedPlatform.display_name"
               variant="outlined"
-              class="text-white"
               hide-details
               density="compact"
               :readonly="!isEditable"
@@ -388,7 +389,7 @@ watch(
         </div>
         <v-row
           v-if="currentPlatform.is_identified"
-          class="text-white text-shadow mt-2 text-center"
+          class="mt-2 text-center"
           no-gutters
         >
           <v-col cols="12">
@@ -525,11 +526,7 @@ watch(
             </v-chip>
           </v-col>
         </v-row>
-        <v-row
-          v-else
-          class="text-white text-shadow mt-2 text-center"
-          no-gutters
-        >
+        <v-row v-else class="mt-2 text-center" no-gutters>
           <v-col cols="12">
             <v-chip color="red" size="small" label>
               <v-icon class="mr-1"> mdi-close </v-icon>
