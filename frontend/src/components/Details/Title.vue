@@ -24,6 +24,9 @@ const releaseDate = new Date(
 
 const platformsStore = storePlatforms();
 const { allPlatforms } = storeToRefs(platformsStore);
+const platform = computed(() => {
+  return allPlatforms.value.find((p) => p.id === props.rom.platform_id);
+});
 
 const hashMatches = computed(() => {
   return [
@@ -79,10 +82,7 @@ const hashMatches = computed(() => {
           :to="{ name: ROUTES.PLATFORM, params: { platform: rom.platform_id } }"
         >
           <MissingFromFSIcon
-            v-if="
-              allPlatforms.find((p) => p.id === rom.platform_id)
-                ?.missing_from_fs
-            "
+            v-if="platform?.missing_from_fs"
             class="mr-2"
             text="Missing platform from filesystem"
           />
@@ -117,6 +117,7 @@ const hashMatches = computed(() => {
           style="text-decoration: none; color: inherit"
           :href="`https://www.igdb.com/games/${rom.slug}`"
           target="_blank"
+          rel="noopener noreferrer"
           class="mr-1"
         >
           <v-chip class="pl-0 mt-1" size="small" title="IGDB ID" @click.stop>
@@ -134,6 +135,7 @@ const hashMatches = computed(() => {
           style="text-decoration: none; color: inherit"
           :href="`https://www.mobygames.com/game/${rom.moby_id}`"
           target="_blank"
+          rel="noopener noreferrer"
           class="mr-1"
         >
           <v-chip
@@ -165,6 +167,7 @@ const hashMatches = computed(() => {
           style="text-decoration: none; color: inherit"
           :href="`https://www.screenscraper.fr/gameinfos.php?gameid=${rom.ss_id}`"
           target="_blank"
+          rel="noopener noreferrer"
           class="mr-1"
         >
           <v-chip
@@ -191,6 +194,7 @@ const hashMatches = computed(() => {
           style="text-decoration: none; color: inherit"
           :href="`https://gamesdb.launchbox-app.com/games/dbid/${rom.launchbox_id}`"
           target="_blank"
+          rel="noopener noreferrer"
           class="mr-1"
         >
           <v-chip
@@ -223,6 +227,7 @@ const hashMatches = computed(() => {
           style="text-decoration: none; color: inherit"
           :href="`https://retroachievements.org/game/${rom.ra_id}`"
           target="_blank"
+          rel="noopener noreferrer"
           class="mr-1"
         >
           <v-chip
@@ -242,6 +247,7 @@ const hashMatches = computed(() => {
           style="text-decoration: none; color: inherit"
           :href="`https://hasheous.org/index.html?page=dataobjectdetail&type=game&id=${rom.hasheous_id}`"
           target="_blank"
+          rel="noopener"
           class="mr-1"
         >
           <v-chip
@@ -266,6 +272,7 @@ const hashMatches = computed(() => {
           style="text-decoration: none; color: inherit"
           :href="`https://flashpointproject.github.io/flashpoint-database/search/#${rom.flashpoint_id}`"
           target="_blank"
+          rel="noopener noreferrer"
           class="mr-1"
         >
           <v-chip class="pl-0 mt-1" size="small" title="Flashpoint ID">
@@ -285,6 +292,7 @@ const hashMatches = computed(() => {
           style="text-decoration: none; color: inherit"
           :href="`https://howlongtobeat.com/game/${rom.hltb_id}`"
           target="_blank"
+          rel="noopener noreferrer"
           class="mr-1"
         >
           <v-chip class="pl-0 mt-1" size="small" title="HowLongToBeat ID">
@@ -319,6 +327,7 @@ const hashMatches = computed(() => {
           style="text-decoration: none; color: inherit"
           :href="`https://www.steamgriddb.com/game/${rom.sgdb_id}`"
           target="_blank"
+          rel="noopener noreferrer"
           class="mr-1"
         >
           <v-chip class="pl-0 mt-1" size="small" title="SGDB ID">
@@ -326,6 +335,20 @@ const hashMatches = computed(() => {
               <v-img src="/assets/scrappers/sgdb.png" />
             </v-avatar>
             <span>{{ rom.sgdb_id }}</span>
+          </v-chip>
+        </a>
+        <a
+          v-if="platform?.libretro_slug && rom.libretro_id"
+          style="text-decoration: none; color: inherit"
+          :href="`https://thumbnails.libretro.com/${encodeURIComponent(platform.libretro_slug)}/Named_Boxarts/${encodeURIComponent(rom.fs_name_no_ext)}.png`"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="mr-1"
+        >
+          <v-chip class="px-0 mt-1" size="small" title="Libretro match">
+            <v-avatar variant="text" size="30" rounded="0">
+              <v-img src="/assets/scrappers/libretro.png" />
+            </v-avatar>
           </v-chip>
         </a>
       </v-col>

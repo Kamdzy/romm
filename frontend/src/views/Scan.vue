@@ -302,12 +302,22 @@ async function stopScan() {
 
                       <v-avatar
                         v-if="item.raw.hltb_slug"
-                        class="bg-surface"
+                        class="bg-surface mr-1"
                         variant="text"
                         size="25"
                         rounded
                       >
                         <v-img src="/assets/scrappers/hltb.png" />
+                      </v-avatar>
+
+                      <v-avatar
+                        v-if="item.raw.libretro_slug"
+                        class="bg-surface"
+                        variant="text"
+                        size="25"
+                        rounded
+                      >
+                        <v-img src="/assets/scrappers/libretro.png" />
                       </v-avatar>
                     </v-col>
                   </v-row>
@@ -447,6 +457,7 @@ async function stopScan() {
                       <a
                         href="https://docs.romm.app/latest/Usage/LibraryManagement/#scan"
                         target="_blank"
+                        rel="noopener"
                         style="font-style: italic; text-decoration: underline"
                       >
                         {{ t("scan.scan-types-more-info") }}

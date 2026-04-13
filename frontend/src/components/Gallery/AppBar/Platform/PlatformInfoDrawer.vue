@@ -398,6 +398,7 @@ watch(
               style="text-decoration: none; color: inherit"
               :href="`https://www.igdb.com/platforms/${currentPlatform.igdb_slug}`"
               target="_blank"
+              rel="noopener noreferrer"
               :tabindex="tabIndex"
             >
               <v-chip class="pl-0 mt-1" size="small" @click.stop>
@@ -412,6 +413,7 @@ watch(
               style="text-decoration: none; color: inherit"
               :href="`https://www.screenscraper.fr/gamesinfos.php?plateforme=${currentPlatform.ss_id}`"
               target="_blank"
+              rel="noopener noreferrer"
               class="ml-1"
               :tabindex="tabIndex"
             >
@@ -430,6 +432,7 @@ watch(
               style="text-decoration: none; color: inherit"
               :href="`https://www.mobygames.com/platform/${currentPlatform.moby_slug}`"
               target="_blank"
+              rel="noopener noreferrer"
               class="ml-1"
               :tabindex="tabIndex"
             >
@@ -445,6 +448,7 @@ watch(
               style="text-decoration: none; color: inherit"
               :href="`https://retroachievements.org/system/${currentPlatform.ra_id}/games`"
               target="_blank"
+              rel="noopener noreferrer"
               class="ml-1"
               :tabindex="tabIndex"
             >
@@ -463,6 +467,7 @@ watch(
               style="text-decoration: none; color: inherit"
               :href="`https://gamesdb.launchbox-app.com/platforms/games/${currentPlatform.launchbox_id}`"
               target="_blank"
+              rel="noopener noreferrer"
               class="ml-1"
               :tabindex="tabIndex"
             >
@@ -484,6 +489,7 @@ watch(
               style="text-decoration: none; color: inherit"
               :href="`https://hasheous.org/index.html?page=dataobjectdetail&type=platform&id=${currentPlatform.hasheous_id}`"
               target="_blank"
+              rel="noopener"
               class="ml-1"
               :tabindex="tabIndex"
             >
@@ -504,6 +510,32 @@ watch(
                 <span>{{ currentPlatform.hasheous_id }}</span>
               </v-chip>
             </a>
+            <a
+              v-if="currentPlatform.tgdb_id"
+              style="text-decoration: none; color: inherit"
+              :href="`https://thegamesdb.net/platform.php?id=${currentPlatform.tgdb_id}`"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="ml-1"
+              :tabindex="tabIndex"
+            >
+              <v-chip
+                class="pl-0 mt-1"
+                size="small"
+                title="TheGamesDB ID"
+                @click.stop
+              >
+                <v-avatar
+                  variant="text"
+                  class="mr-2 bg-surface pa-1"
+                  size="30"
+                  rounded="0"
+                >
+                  <v-img src="/assets/scrappers/tgdb.png" />
+                </v-avatar>
+                <span>{{ currentPlatform.tgdb_id }}</span>
+              </v-chip>
+            </a>
             <v-chip
               v-if="currentPlatform.flashpoint_id"
               class="px-0 ml-1 mt-1"
@@ -522,6 +554,16 @@ watch(
             >
               <v-avatar variant="text" class="bg-surface" size="30" rounded="0">
                 <v-img src="/assets/scrappers/hltb.png" />
+              </v-avatar>
+            </v-chip>
+            <v-chip
+              v-if="currentPlatform.libretro_slug"
+              class="px-0 ml-1 mt-1"
+              size="small"
+              title="Libretro"
+            >
+              <v-avatar variant="text" class="bg-surface" size="30" rounded="0">
+                <v-img src="/assets/scrappers/libretro.png" />
               </v-avatar>
             </v-chip>
           </v-col>
