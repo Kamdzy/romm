@@ -1,4 +1,4 @@
-import base64
+import html
 import re
 from datetime import datetime
 from typing import Final, NotRequired, TypedDict
@@ -30,27 +30,33 @@ from .base_handler import (
     strip_sensitive_query_params,
 )
 
-SS_DEV_ID: Final = base64.b64decode("enVyZGkxNQ==").decode()
-SS_DEV_PASSWORD: Final = base64.b64decode("eFRKd29PRmpPUUc=").decode()
 SENSITIVE_KEYS = {"ssid", "sspassword"}
 
 
 def get_preferred_regions(rom: Rom | None = None) -> list[str]:
-    """Get preferred regions, prepending the rom's own region tags when available."""
+    """Get preferred regions, prepending the rom's own region tags when available.
+
+    When a rom is tagged with multiple regions (e.g. "(Japan, USA)"), the rom's
+    own tags are reordered according to the user's SCAN_REGION_PRIORITY so the
+    user's preference wins among the regions the file is actually tagged as.
+    Filename-tagged regions not present in the priority list keep their relative
+    order and follow the prioritized ones.
+    """
+    config = cm.get_config()
+    priority = config.SCAN_REGION_PRIORITY
+
     rom_codes: list[str] = []
     if rom is not None and isinstance(rom.regions, list):
         for region_name in rom.regions:
             code = region_name_to_provider_shortcode(region_name)
             if code:
                 rom_codes.append(code)
-
-    config = cm.get_config()
-    return list(
-        dict.fromkeys(
-            rom_codes
-            + config.SCAN_REGION_PRIORITY
-            + ["us", "wor", "ss", "eu", "jp", "cus"]
+        rom_codes.sort(
+            key=lambda code: priority.index(code) if code in priority else len(priority)
         )
+
+    return list(
+        dict.fromkeys(rom_codes + priority + ["us", "wor", "ss", "eu", "jp", "cus"])
     ) + ["unk"]
 
 
@@ -81,6 +87,10 @@ ARCADES_SS_IDS: Final = [ARCADE_SS_ID, CPS1_SS_ID, CPS2_SS_ID, CPS3_SS_ID]
 
 # Regex to detect ScreenScraper ID tags in filenames like (ssfr-12345)
 SS_TAG_REGEX = re.compile(r"\(ssfr-(\d+)\)", re.IGNORECASE)
+
+NOTGAME_NAME_PREFIX: Final = "ZZZ(NOTGAME)"
+
+_ISO_EXTENSIONS: Final = frozenset({"iso", "cue", "chd", "gdi", "cdi", "bin"})
 
 ACCEPTABLE_FILE_EXTENSIONS_BY_PLATFORM_SLUG = {
     UPS.DC: ["cue", "chd", "gdi", "cdi"],
@@ -148,6 +158,23 @@ class SSMetadata(SSMetadataMedia):
 class SSRom(BaseRom):
     ss_id: int | None
     ss_metadata: NotRequired[SSMetadata]
+
+
+def _is_notgame(game: SSGame) -> bool:
+    if game.get("notgame") == "true":
+        return True
+    return any(
+        name.get("text", "").upper().startswith(NOTGAME_NAME_PREFIX)
+        for name in game.get("noms", [])
+    )
+
+
+def _get_rom_type(file: RomFile) -> str:
+    if not file.is_top_level:
+        return "dossier"
+    if file.file_extension.lower() in _ISO_EXTENSIONS:
+        return "iso"
+    return "rom"
 
 
 def extract_media_from_ss_game(rom: Rom, game: SSGame) -> SSMetadataMedia:
@@ -482,8 +509,8 @@ def build_ss_game(rom: Rom, game: SSGame) -> SSRom:
     ss_id = int(game["id"]) if game.get("id") is not None else None
     game_rom: SSRom = {
         "ss_id": ss_id,
-        "name": res_name.replace(" : ", ": "),  # Normalize colons
-        "summary": res_summary,
+        "name": html.unescape(res_name.replace(" : ", ": ")),  # Normalize colons
+        "summary": html.unescape(res_summary),
         "url_cover": str(url_cover) if url_cover else "",
         "url_manual": str(url_manual) if url_manual else "",
         "url_screenshots": url_screenshots,
@@ -534,6 +561,11 @@ class SSHandler(MetadataHandler):
 
         games_by_name: dict[str, SSGame] = {}
         for rom in roms:
+            if _is_notgame(rom):
+                log.warning(
+                    "ScreenScraper: Received notgame entry in search results, ignoring"
+                )
+                continue
             for name in rom.get("noms", []):
                 if name["text"] not in games_by_name or int(rom["id"]) < int(
                     games_by_name[name["text"]]["id"]
@@ -612,8 +644,16 @@ class SSHandler(MetadataHandler):
             sha1=sha1_hash,
             crc=crc_hash,
             rom_size_bytes=fs_size_bytes,
+            rom_name=first_file.file_name,
+            rom_type=_get_rom_type(first_file),
         )
         if not res:
+            return SSRom(ss_id=None)
+
+        if _is_notgame(res):
+            log.warning(
+                "ScreenScraper: Received notgame entry from hash lookup, ignoring"
+            )
             return SSRom(ss_id=None)
 
         return build_ss_game(rom, res)
@@ -644,6 +684,9 @@ class SSHandler(MetadataHandler):
 
         search_term = fs_rom_handler.get_file_name_with_no_tags(file_name)
         fallback_rom = SSRom(ss_id=None)
+
+        if not search_term:
+            return fallback_rom
 
         # Support for PS2 OPL filename format
         match = PS2_OPL_REGEX.match(file_name)
@@ -766,7 +809,7 @@ class SSHandler(MetadataHandler):
         return [
             build_ss_game(rom, game)
             for game in matched_games
-            if _is_ss_region(game) and game.get("id")
+            if not _is_notgame(game) and _is_ss_region(game) and game.get("id")
         ]
 
 
