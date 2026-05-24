@@ -27,10 +27,25 @@ from .base_handler import (
 )
 from .base_handler import UniversalPlatformSlug as UPS
 from .base_handler import (
+    restore_sensitive_query_params,
     strip_sensitive_query_params,
 )
 
 SENSITIVE_KEYS = {"ssid", "sspassword"}
+
+
+def add_ss_auth_to_url(url: str) -> str:
+    """Re-add SS user credentials to a media URL at download time (never stored)."""
+    if not SCREENSCRAPER_USER or not SCREENSCRAPER_PASSWORD:
+        return url
+
+    return restore_sensitive_query_params(
+        url,
+        {
+            "ssid": SCREENSCRAPER_USER,
+            "sspassword": SCREENSCRAPER_PASSWORD,
+        },
+    )
 
 
 def get_preferred_regions(rom: Rom | None = None) -> list[str]:
@@ -99,6 +114,15 @@ ACCEPTABLE_FILE_EXTENSIONS_BY_PLATFORM_SLUG = {
 }
 
 
+def _is_notgame(game: SSGame) -> bool:
+    if game.get("notgame") == "true":
+        return True
+    return any(
+        name.get("text", "").upper().startswith(NOTGAME_NAME_PREFIX)
+        for name in game.get("noms", [])
+    )
+
+
 class SSPlatform(TypedDict):
     slug: str
     ss_id: int | None
@@ -158,15 +182,6 @@ class SSMetadata(SSMetadataMedia):
 class SSRom(BaseRom):
     ss_id: int | None
     ss_metadata: NotRequired[SSMetadata]
-
-
-def _is_notgame(game: SSGame) -> bool:
-    if game.get("notgame") == "true":
-        return True
-    return any(
-        name.get("text", "").upper().startswith(NOTGAME_NAME_PREFIX)
-        for name in game.get("noms", [])
-    )
 
 
 def _get_rom_type(file: RomFile) -> str:
@@ -599,12 +614,12 @@ class SSHandler(MetadataHandler):
 
     async def lookup_rom(
         self, rom: Rom, platform_ss_id: int, files: list[RomFile]
-    ) -> SSRom:
+    ) -> tuple[SSRom, bool]:
         if not self.is_enabled():
-            return SSRom(ss_id=None)
+            return SSRom(ss_id=None), False
 
         if not platform_ss_id:
-            return SSRom(ss_id=None)
+            return SSRom(ss_id=None), False
 
         filtered_files = [
             file
@@ -624,7 +639,7 @@ class SSHandler(MetadataHandler):
         # expected to have the correct and complete hash values for external services.
         first_file = max(filtered_files, key=lambda f: f.file_size_bytes, default=None)
         if first_file is None:
-            return SSRom(ss_id=None)
+            return SSRom(ss_id=None), False
 
         md5_hash = first_file.md5_hash
         sha1_hash = first_file.sha1_hash
@@ -636,7 +651,7 @@ class SSHandler(MetadataHandler):
                 "No hashes provided for ScreenScraper lookup. "
                 "At least one of md5_hash, sha1_hash, or crc_hash is required."
             )
-            return SSRom(ss_id=None)
+            return SSRom(ss_id=None), False
 
         res = await self.ss_service.get_game_info(
             system_id=platform_ss_id,
@@ -648,15 +663,15 @@ class SSHandler(MetadataHandler):
             rom_type=_get_rom_type(first_file),
         )
         if not res:
-            return SSRom(ss_id=None)
+            return SSRom(ss_id=None), False
 
         if _is_notgame(res):
             log.warning(
                 "ScreenScraper: Received notgame entry from hash lookup, ignoring"
             )
-            return SSRom(ss_id=None)
+            return SSRom(ss_id=None), True
 
-        return build_ss_game(rom, res)
+        return build_ss_game(rom, res), False
 
     async def get_rom(self, rom: Rom, file_name: str, platform_ss_id: int) -> SSRom:
         from handler.filesystem import fs_rom_handler
