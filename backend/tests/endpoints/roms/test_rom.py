@@ -38,6 +38,29 @@ def test_get_rom(client: TestClient, access_token: str, rom: Rom):
     assert body["id"] == rom.id
 
 
+def test_download_multi_file_rom_content(
+    client: TestClient, access_token: str, multi_file_rom: Rom
+):
+    """Downloading a multi-file (game folder) ROM must not 500.
+
+    The download endpoint builds each manifest entry's name from
+    `file.rom.full_path` after the handler session has closed; a missing
+    `RomFile.rom` back-reference previously raised `DetachedInstanceError`.
+    """
+    response = client.get(
+        f"/api/roms/{multi_file_rom.id}/content/{multi_file_rom.fs_name}",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    # mod_zip manifest: one line per file, plus a generated .m3u playlist.
+    assert response.headers["X-Archive-Files"] == "zip"
+    body = response.text
+    assert "disc1.bin" in body
+    assert "disc2.bin" in body
+    assert f"{multi_file_rom.fs_name}.m3u" in body
+
+
 def test_get_all_roms(
     client: TestClient, access_token: str, rom: Rom, platform: Platform
 ):
@@ -57,6 +80,62 @@ def test_get_all_roms(
     items = body["items"]
     assert len(items) == 1
     assert items[0]["id"] == rom.id
+
+
+def test_get_rom_content_requires_auth(client: TestClient, rom: Rom, rom_file):
+    response = client.get(f"/api/roms/{rom.id}/content/test_rom.zip")
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_get_rom_content_single_file(
+    client: TestClient, access_token: str, rom: Rom, rom_file
+):
+    response = client.get(
+        f"/api/roms/{rom.id}/content/test_rom.zip",
+        headers={"Authorization": f"Bearer {access_token}"},
+        follow_redirects=False,
+    )
+    assert response.status_code == status.HTTP_200_OK
+    # Single-file roms are proxied through nginx via X-Accel-Redirect.
+    assert "X-Accel-Redirect" in response.headers
+
+
+def test_get_rom_content_valid_file_id(
+    client: TestClient, access_token: str, rom: Rom, rom_file
+):
+    response = client.get(
+        f"/api/roms/{rom.id}/content/test_rom.zip",
+        headers={"Authorization": f"Bearer {access_token}"},
+        params={"file_ids": str(rom_file.id)},
+        follow_redirects=False,
+    )
+    assert response.status_code == status.HTTP_200_OK
+    assert "X-Accel-Redirect" in response.headers
+
+
+def test_get_rom_content_stale_file_id_returns_404(
+    client: TestClient, access_token: str, rom: Rom, rom_file
+):
+    # Regression test for #3470: a remembered file id that no longer exists
+    # (e.g. after a rename gave the file a new id) must return a clean 404
+    # instead of an empty-.m3u ZIP that nginx aborts as a 0-byte response.
+    stale_file_id = rom_file.id + 999
+    response = client.get(
+        f"/api/roms/{rom.id}/content/test_rom.zip",
+        headers={"Authorization": f"Bearer {access_token}"},
+        params={"file_ids": str(stale_file_id)},
+        follow_redirects=False,
+    )
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_get_rom_content_missing_rom_returns_404(client: TestClient, access_token: str):
+    response = client.get(
+        "/api/roms/999999/content/missing.zip",
+        headers={"Authorization": f"Bearer {access_token}"},
+        follow_redirects=False,
+    )
+    assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
 @patch.object(FSRomsHandler, "rename_fs_rom")
@@ -126,6 +205,30 @@ def test_update_rom_reparses_tags_on_fs_name_change(
     assert body["regions"] == []
     assert body["revision"] == "1"
     assert body["tags"] == []
+
+
+@patch.object(FSRomsHandler, "rename_fs_rom")
+@patch.object(IGDBHandler, "get_rom_by_id", return_value=IGDBRom(igdb_id=None))
+def test_update_rom_adds_region_tag_on_rename(
+    rename_fs_rom_mock: AsyncMock,
+    get_rom_by_id_mock: AsyncMock,
+    client: TestClient,
+    access_token: str,
+    rom: Rom,
+):
+    """Renaming an untagged ROM to add ``(Europe)`` surfaces the region (issue #3471)."""
+    assert rom.regions == []
+
+    response = client.put(
+        f"/api/roms/{rom.id}",
+        headers={"Authorization": f"Bearer {access_token}"},
+        data={"fs_name": "test_rom (Europe).zip"},
+    )
+    assert response.status_code == status.HTTP_200_OK
+
+    body = response.json()
+    assert body["fs_name"] == "test_rom (Europe).zip"
+    assert body["regions"] == ["Europe"]
 
 
 # Minimal valid PNG (1x1 transparent pixel)
