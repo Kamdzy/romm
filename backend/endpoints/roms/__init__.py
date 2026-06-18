@@ -75,6 +75,7 @@ from utils.validation import ValidationError
 from .files import router as files_router
 from .manual import router as manual_router
 from .notes import router as notes_router
+from .soundtrack import router as soundtrack_router
 from .upload import router as upload_router
 
 router = APIRouter(
@@ -84,6 +85,7 @@ router = APIRouter(
 router.include_router(upload_router)
 router.include_router(files_router)
 router.include_router(manual_router)
+router.include_router(soundtrack_router)
 router.include_router(notes_router)
 
 
@@ -482,6 +484,10 @@ def get_roms(
             description="Filter roms updated after this datetime (ISO 8601 format with timezone information)."
         ),
     ] = None,
+    with_files: Annotated[
+        bool,
+        Query(description="Whether to include each rom's file entries."),
+    ] = False,
 ) -> CustomLimitOffsetPage[SimpleRomSchema]:
     """Retrieve roms."""
     unfiltered_query, order_by_attr = db_rom_handler.get_roms_query(
@@ -535,7 +541,7 @@ def get_roms(
     char_index_dict = {}
     if with_char_index:
         char_index = db_rom_handler.with_char_index(
-            query=query, order_by_attr=order_by_attr
+            query=query, order_by_attr=order_by_attr, order_dir=order_dir.lower()
         )
         char_index_dict = {char: index for (char, index) in char_index}
 
@@ -571,15 +577,22 @@ def get_roms(
         rom_id_index = session.scalars(query.with_only_columns(Rom.id)).all()  # type: ignore
 
         def _transform(items: Sequence[Rom]) -> list[SimpleRomSchema]:
-            sibling_ids_by_rom = db_rom_handler.get_sibling_ids_for_roms(
-                [i.id for i in items], session=session
+            rom_ids = [i.id for i in items]
+            files_by_rom = (
+                db_rom_handler.get_files_for_roms(rom_ids, session=session)
+                if with_files
+                else {}
+            )
+            siblings_by_rom = db_rom_handler.get_siblings_for_roms(
+                rom_ids, user_id=request.user.id, session=session
             )
 
             return [
                 SimpleRomSchema.from_orm_with_request(
                     db_rom=item,
                     request=request,
-                    sibling_ids=sibling_ids_by_rom.get(item.id, []),
+                    files=files_by_rom.get(item.id, []),
+                    siblings=siblings_by_rom.get(item.id, []),
                 )
                 for item in items
             ]
@@ -820,6 +833,32 @@ async def get_rom_filters(request: Request) -> RomFiltersDict:
 
 @protected_route(
     router.get,
+    "/{id}/simple",
+    [] if DISABLE_DOWNLOAD_ENDPOINT_AUTH else [Scope.ROMS_READ],
+    responses={status.HTTP_404_NOT_FOUND: {}},
+)
+def get_rom_simple(
+    request: Request,
+    id: Annotated[int, PathVar(description="Rom internal id.", ge=1)],
+) -> SimpleRomSchema:
+    """Retrieve a rom by ID with the lightweight schema — no eager-loaded
+    `user_saves` / `user_states` / `user_screenshots` / `user_collections` /
+    `all_user_notes` arrays. Designed for the v2 gallery card which only
+    needs the indicator flags (`has_notes`, `ra_id`, status, etc.) already
+    present on `SimpleRomSchema`. The full `DetailedRomSchema` is only
+    fetched on user-driven detail interactions (game details page, quick-
+    note dialog open, achievements panel)."""
+
+    rom = db_rom_handler.get_rom(id)
+
+    if not rom:
+        raise RomNotFoundInDatabaseException(id)
+
+    return SimpleRomSchema.from_orm_with_request(rom, request)
+
+
+@protected_route(
+    router.get,
     "/{id}",
     [] if DISABLE_DOWNLOAD_ENDPOINT_AUTH else [Scope.ROMS_READ],
     responses={status.HTTP_404_NOT_FOUND: {}},
@@ -867,6 +906,12 @@ async def head_rom_content(
         file_id_values = {int(f.strip()) for f in file_ids.split(",") if f.strip()}
         files = [f for f in files if f.id in file_id_values]
     files.sort(key=lambda x: x.file_name)
+
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No files found for ROM {id}",
+        )
 
     # Serve the file directly in development mode for emulatorjs
     if DEV_MODE:
@@ -944,6 +989,12 @@ async def get_rom_content(
         file_id_values = {int(f.strip()) for f in file_ids.split(",") if f.strip()}
         files = [f for f in files if f.id in file_id_values]
     files.sort(key=lambda x: x.file_name)
+
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No files found for ROM {id}",
+        )
 
     log.info(
         f"User {hl(current_username, color=BLUE)} is downloading {hl(rom.fs_name)}"
