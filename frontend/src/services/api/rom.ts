@@ -190,7 +190,7 @@ async function getRoms({
   searchTerm = null,
   limit = 72,
   offset = 0,
-  orderBy = "name",
+  orderBy = "",
   orderDir = "asc",
   filterMatched = null,
   filterFavorites = null,
@@ -481,6 +481,7 @@ async function updateRom({
 
   const fields: FormInputField<UpdateRomInput>[] = [
     ["name", rom.name],
+    ["name_sort_key", rom.name_sort_key ?? ""],
     ["fs_name", rom.fs_name],
     ["summary", rom.summary],
     ["igdb_id", toFormIdValue(rom.igdb_id)],
