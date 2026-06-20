@@ -1,4 +1,5 @@
 {
+  "crt-mode": "CRT mode",
   "about": "Rólunk",
   "add": "Hozzáadás",
   "administration": "Adminisztráció",
@@ -14,6 +15,7 @@
   "create": "Létrehoz",
   "delete": "Törlés",
   "dropzone-description": "Húzd ide a ROM fájljait, vagy kattints a böngészéshez",
+  "dropzone-hint": "Húzd ide a fájlokat, vagy kattints a tallózáshoz",
   "dropzone-drag-over": "Engedd el a feltöltéshez",
   "dropzone-title": "Fájlok ide helyezése",
   "edit": "Szerkesztés",
@@ -148,5 +150,7 @@
   "changelog-empty-title": "Még nincsenek kiadások",
   "changelog-empty-hint": "A tároló még nem tett közzé kiadást.",
   "changelog-view-all": "Összes kiadás megtekintése a GitHubon",
-  "visibility": "Láthatóság"
+  "visibility": "Láthatóság",
+  "server-offline-retrying": "Server connection lost · retrying…",
+  "server-reconnected": "Reconnected to the server"
 }

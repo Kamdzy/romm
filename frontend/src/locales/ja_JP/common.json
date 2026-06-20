@@ -1,4 +1,5 @@
 {
+  "crt-mode": "CRT mode",
   "about": "概要",
   "add": "追加",
   "administration": "管理者メニュー",
@@ -14,6 +15,7 @@
   "create": "作成",
   "delete": "削除",
   "dropzone-description": "ROMファイルをここにドラッグ&ドロップするか、クリックして参照してください",
+  "dropzone-hint": "ドラッグ＆ドロップ、またはクリックして選択",
   "dropzone-drag-over": "アップロードするには離してください",
   "dropzone-title": "ファイルをここにドロップ",
   "edit": "編集",
@@ -148,5 +150,7 @@
   "changelog-empty-title": "まだリリースがありません",
   "changelog-empty-hint": "リポジトリにはまだリリースが公開されていません。",
   "changelog-view-all": "GitHub ですべてのリリースを表示",
-  "visibility": "公開設定"
+  "visibility": "公開設定",
+  "server-offline-retrying": "Server connection lost · retrying…",
+  "server-reconnected": "Reconnected to the server"
 }

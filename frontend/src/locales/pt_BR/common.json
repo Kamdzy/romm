@@ -1,4 +1,5 @@
 {
+  "crt-mode": "Modo CRT",
   "about": "Sobre",
   "add": "Adicionar",
   "administration": "Administração",
@@ -14,6 +15,7 @@
   "create": "Criar",
   "delete": "Excluir",
   "dropzone-description": "Arraste e solte seus arquivos ROM aqui, ou clique para navegar",
+  "dropzone-hint": "Arraste e solte, ou clique para procurar",
   "dropzone-drag-over": "Solte para carregar",
   "dropzone-title": "Solte os arquivos aqui",
   "edit": "Editar",
@@ -148,5 +150,7 @@
   "changelog-empty-title": "Nenhuma versão ainda",
   "changelog-empty-hint": "O repositório ainda não publicou nenhuma versão.",
   "changelog-view-all": "Ver todas as versões no GitHub",
-  "visibility": "Visibilidade"
+  "visibility": "Visibilidade",
+  "server-offline-retrying": "Server connection lost · retrying…",
+  "server-reconnected": "Reconnected to the server"
 }
