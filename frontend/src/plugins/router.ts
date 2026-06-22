@@ -35,6 +35,7 @@ export const ROUTES = {
   SCAN: "scan",
   UPLOAD: "upload",
   PATCHER: "patcher",
+  ACTIVITY: "activity",
   USER_PROFILE: "user-profile",
   USER_INTERFACE: "user-interface",
   LIBRARY_MANAGEMENT: "library-management",
@@ -44,6 +45,7 @@ export const ROUTES = {
   SERVER_STATS: "server-stats",
   LOGS: "logs",
   PAIR: "pair",
+  PAIR_DEVICE: "pair-device",
   APRIL_FOOLS: "april-fools",
   CONSOLE_HOME: "console-home",
   CONSOLE_PLATFORM: "console-platform",
@@ -318,6 +320,19 @@ const routes = [
             },
           },
           {
+            path: "activity",
+            name: ROUTES.ACTIVITY,
+            meta: {
+              title: i18n.global.t("activity.active-sessions"),
+            },
+            components: {
+              // v2-only view; v1 has no activity concept so it redirects
+              // home if a v1 user deep-links here.
+              default: () => import("@/views/Home.vue"),
+              v2: v2For(ROUTES.ACTIVITY),
+            },
+          },
+          {
             path: "user/:user",
             name: ROUTES.USER_PROFILE,
             meta: { bare: true },
@@ -460,6 +475,14 @@ const routes = [
         },
       },
     ],
+  },
+  {
+    path: "/pair/device",
+    name: ROUTES.PAIR_DEVICE,
+    components: {
+      default: () => import("@/v2/views/DevicePairShell.vue"),
+      v2: () => import("@/v2/views/DevicePairShell.vue"),
+    },
   },
   {
     path: "/pair",

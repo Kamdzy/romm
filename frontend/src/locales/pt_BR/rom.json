@@ -219,6 +219,8 @@
   "single-player": "Um jogador",
   "snackbar-download-link-copied": "Link de download copiado para a área de transferência",
   "snackbar-link-copied": "Link copiado para a área de transferência",
+  "snackbar-removed-from-playing": "Removido de jogando",
+  "snackbar-remove-from-playing-failed": "Falha ao remover de jogando",
   "snackbar-update-field-failed": "Falha ao atualizar {field}",
   "snackbar-update-status-failed": "Falha ao atualizar o status",
   "status-active-count": "Status: {count} ativos",
@@ -400,10 +402,14 @@
   "screenshots-section-rom": "Capturas da ROM",
   "screenshots-section-rom-desc": "Compartilhadas com todos que veem este jogo",
   "screenshots-section-mine": "Minhas capturas",
-  "screenshots-section-mine-desc": "Privadas até você torná-las públicas",
   "screenshots-section-community": "Comunidade",
   "screenshot-make-public": "Tornar pública",
   "screenshot-make-private": "Tornar privada",
   "screenshot-public": "Pública",
-  "screenshot-visibility-failed": "Não foi possível atualizar a visibilidade: {error}"
+  "screenshot-visibility-failed": "Não foi possível atualizar a visibilidade: {error}",
+  "saves-section-mine": "My saves",
+  "saves-section-community": "Community",
+  "states-section-mine": "My states",
+  "states-section-community": "Community",
+  "cant-toggle-visibility": "Could not change visibility: {error}"
 }

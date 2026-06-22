@@ -219,6 +219,8 @@
   "single-player": "Одиночная игра",
   "snackbar-download-link-copied": "Ссылка для скачивания скопирована в буфер обмена",
   "snackbar-link-copied": "Ссылка скопирована в буфер обмена",
+  "snackbar-removed-from-playing": "Удалено из играющих",
+  "snackbar-remove-from-playing-failed": "Не удалось удалить из играющих",
   "snackbar-update-field-failed": "Не удалось обновить {field}",
   "snackbar-update-status-failed": "Не удалось обновить статус",
   "status-active-count": "Статус: {count} активных",
@@ -400,10 +402,14 @@
   "screenshots-section-rom": "Скриншоты ROM",
   "screenshots-section-rom-desc": "Доступны всем, кто видит эту игру",
   "screenshots-section-mine": "Мои скриншоты",
-  "screenshots-section-mine-desc": "Видны только вам, пока вы не сделаете их публичными",
   "screenshots-section-community": "Сообщество",
   "screenshot-make-public": "Сделать публичной",
   "screenshot-make-private": "Сделать приватной",
   "screenshot-public": "Публичная",
-  "screenshot-visibility-failed": "Не удалось изменить видимость: {error}"
+  "screenshot-visibility-failed": "Не удалось изменить видимость: {error}",
+  "saves-section-mine": "My saves",
+  "saves-section-community": "Community",
+  "states-section-mine": "My states",
+  "states-section-community": "Community",
+  "cant-toggle-visibility": "Could not change visibility: {error}"
 }
