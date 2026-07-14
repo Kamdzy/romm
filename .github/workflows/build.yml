@@ -126,10 +126,6 @@ jobs:
         run: |
           sed -i 's/<version>/${{ steps.meta.outputs.version }}/' backend/__version__.py
 
-      - name: Compute exclude-newer date
-        id: exclude-newer
-        run: echo "date=$(date -u -d '-7 days' '+%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
-
       # - name: Build slim image
       #   id: build-slim
       #   uses: docker/build-push-action@v6.18.0
@@ -155,5 +151,3 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           target: full-image
-          build-args: |
-            UV_EXCLUDE_NEWER=${{ steps.exclude-newer.outputs.date }}
