@@ -48,6 +48,7 @@ import { useBackgroundArt } from "@/v2/composables/useBackgroundArt";
 import { useCoverArt } from "@/v2/composables/useCoverArt";
 import { useFullscreenPref } from "@/v2/composables/useFullscreenPref";
 import { useInputModality } from "@/v2/composables/useInputModality";
+import { usePageTitle } from "@/v2/composables/usePageTitle";
 import { usePlaySession } from "@/v2/composables/usePlaySession";
 import type { SliderBtnGroupItem } from "@/v2/lib/primitives/RSliderBtnGroup/types";
 import storeGalleryRoms from "@/v2/stores/galleryRoms";
@@ -197,7 +198,7 @@ const setBgArt = useBackgroundArt();
 // the active style is alt-art, so the purple glow can be dropped for a
 // floating disc / cartridge / mix image. The launch flourish is triggered
 // imperatively on the GameCover via `coverRef` — see onPlay.
-const art = useCoverArt(() => heroRom.value);
+const art = useCoverArt(() => heroRom.value, { context: "player" });
 const heroIsAlt = computed(
   () =>
     art.style.value !== "cover_path" &&
@@ -372,10 +373,6 @@ onMounted(async () => {
   });
   rom.value = romResponse.data;
 
-  if (rom.value) {
-    document.title = `${rom.value.name} | Play`;
-  }
-
   const firmwareResponse = await firmwareApi.getFirmware({
     platformId: romResponse.data.platform_id,
   });
@@ -530,6 +527,10 @@ const title = computed(
   () => heroRom.value?.name || heroRom.value?.fs_name_no_ext || "",
 );
 
+usePageTitle(() =>
+  title.value ? t("play.page-title", { name: title.value }) : null,
+);
+
 const platformLabel = computed(
   () =>
     heroRom.value?.platform_custom_name ||
@@ -605,6 +606,7 @@ const selectedAsset = computed<SaveSchema | StateSchema | null>(() =>
             :title="title"
             :identified="heroRom?.is_identified ?? true"
             :morph-id="morphRomId"
+            style-context="player"
             morph-static
             hover-motion
           />
