@@ -3,11 +3,16 @@ import shutil
 from dataclasses import dataclass
 
 from anyio import Path as AnyioPath
+from rq.job import Job
 
-from config import RESOURCES_BASE_PATH
+from config import (
+    ENABLE_SCHEDULED_CLEANUP_ORPHANED_RESOURCES,
+    RESOURCES_BASE_PATH,
+    SCHEDULED_CLEANUP_ORPHANED_RESOURCES_CRON,
+)
 from handler.database import db_platform_handler, db_rom_handler
 from logger.logger import log
-from tasks.tasks import Task, TaskType, update_job_meta
+from tasks.tasks import PeriodicTask, TaskType, update_job_meta
 from utils.context import initialize_context
 
 
@@ -40,7 +45,7 @@ class CleanupStats:
         }
 
 
-class CleanupOrphanedResourcesTask(Task):
+class CleanupOrphanedResourcesTask(PeriodicTask):
     def __init__(self):
         super().__init__(
             title="Cleanup orphaned resources",
@@ -48,12 +53,30 @@ class CleanupOrphanedResourcesTask(Task):
             task_type=TaskType.CLEANUP,
             enabled=True,
             manual_run=True,
-            cron_string=None,
+            cron_string=(
+                SCHEDULED_CLEANUP_ORPHANED_RESOURCES_CRON
+                if ENABLE_SCHEDULED_CLEANUP_ORPHANED_RESOURCES
+                else None
+            ),
+            func="tasks.scheduled.cleanup_orphaned_resources.cleanup_orphaned_resources_task.run",
         )
 
+    def init(self) -> Job | None:
+        # `enabled` stays True for manual runs, so the absence of a cron string
+        # is what drives unscheduling when the schedule is turned off.
+        if not self.cron_string:
+            self.unschedule()
+            return None
+
+        return super().init()
+
     @initialize_context()
-    async def run(self) -> dict[str, int]:
-        """Clean up orphaned resources."""
+    async def run(self, force: bool = False) -> dict[str, int]:
+        """Clean up orphaned resources.
+
+        Args:
+            force: Clean up even when the database reports an empty library.
+        """
         log.info(f"Starting {self.title} task...")
 
         cleanup_stats = CleanupStats()
@@ -89,6 +112,18 @@ class CleanupOrphanedResourcesTask(Task):
             async for entry in roms_resources_dir.iterdir()
             if entry.name.isdigit() and await entry.is_dir()
         }
+
+        # An empty library alongside artwork on disk is far more likely to be a
+        # database that is unavailable or mid-migration than one that was really
+        # emptied, and every platform directory would be removed in one pass.
+        if platform_dirs and not existing_platforms and not force:
+            cleanup_stats.update(platforms_in_fs=len(platform_dirs))
+            log.warning(
+                f"Database reports no platforms while {len(platform_dirs)} platform "
+                "resource directories exist on disk, skipping cleanup. Run the task "
+                "manually with `force` to clean them up anyway."
+            )
+            return cleanup_stats.to_dict()
 
         rom_dirs_by_platform: dict[int, set[int]] = {}
         for platform_dir in platform_dirs:
