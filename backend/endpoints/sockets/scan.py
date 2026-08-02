@@ -26,7 +26,12 @@ from exceptions.fs_exceptions import (
 )
 from exceptions.socket_exceptions import ScanStoppedException
 from handler.auth.constants import Scope
-from handler.database import db_firmware_handler, db_platform_handler, db_rom_handler
+from handler.database import (
+    db_collection_handler,
+    db_firmware_handler,
+    db_platform_handler,
+    db_rom_handler,
+)
 from handler.filesystem import (
     fs_firmware_handler,
     fs_platform_handler,
@@ -667,19 +672,23 @@ async def _identify_platform(
             fs_fw=fs_fw,
         )
 
+    # `new_firmware_count` is scoped to this scan: the client reports what the
+    # scan discovered, not the platform's total firmware library.
     await socket_manager.emit(
         "scan:scanning_platform",
-        PlatformSchema.model_validate(platform).model_dump(
-            include={
-                "id",
-                "name",
-                "display_name",
-                "slug",
-                "fs_slug",
-                "is_identified",
-                "firmware_count",
-            }
-        ),
+        {
+            **PlatformSchema.model_validate(platform).model_dump(
+                include={
+                    "id",
+                    "name",
+                    "display_name",
+                    "slug",
+                    "fs_slug",
+                    "is_identified",
+                }
+            ),
+            "new_firmware_count": new_firmware,
+        },
     )
 
     # This reduces the number of socket emissions
@@ -968,6 +977,14 @@ async def scan_platforms(
 
         # The library changed; drop cached filter values.
         db_rom_handler.invalidate_filter_values_cache()
+
+        # Smart collection membership is derived from the library, and is no
+        # longer recomputed while serving a gallery page. The scan itself is
+        # done, so a failure here must not report it as one.
+        try:
+            db_collection_handler.refresh_smart_collections()
+        except Exception as e:
+            log.error(f"Couldn't refresh smart collections after the scan: {e}")
 
         # Export metadata files if enabled in config
         config = cm.get_config()
