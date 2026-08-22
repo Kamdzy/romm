@@ -73,8 +73,11 @@ COPY --from=uv-stage /usr/local/bin/uv /usr/local/bin/uvx /bin/
 WORKDIR /src
 
 COPY ./pyproject.toml ./uv.lock /src/
-RUN uv sync --frozen --no-cache \
-    ${UV_EXCLUDE_NEWER:+--exclude-newer "$UV_EXCLUDE_NEWER"}
+RUN if [ -n "${UV_EXCLUDE_NEWER}" ]; then \
+        uv sync --frozen --no-cache --exclude-newer "${UV_EXCLUDE_NEWER}"; \
+    else \
+        uv sync --frozen --no-cache; \
+    fi
 
 FROM backend-build AS backend-dev-build
 ARG UV_EXCLUDE_NEWER
@@ -83,8 +86,11 @@ ARG UV_EXCLUDE_NEWER
 RUN apk add --no-cache \
     linux-headers
 
-RUN uv sync --frozen --no-cache --all-extras \
-    ${UV_EXCLUDE_NEWER:+--exclude-newer "$UV_EXCLUDE_NEWER"}
+RUN if [ -n "${UV_EXCLUDE_NEWER}" ]; then \
+        uv sync --frozen --no-cache --all-extras --exclude-newer "${UV_EXCLUDE_NEWER}"; \
+    else \
+        uv sync --frozen --no-cache --all-extras; \
+    fi
 
 
 # CUSTOM RAHASHER FOR RETROACHIEVEMENTS
