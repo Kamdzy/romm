@@ -73,8 +73,9 @@ COPY --from=uv-stage /usr/local/bin/uv /usr/local/bin/uvx /bin/
 WORKDIR /src
 
 COPY ./pyproject.toml ./uv.lock /src/
-RUN if [ -n "${UV_EXCLUDE_NEWER}" ]; then \
-        uv sync --frozen --no-cache --exclude-newer "${UV_EXCLUDE_NEWER}"; \
+RUN _uv_exclude_newer="${UV_EXCLUDE_NEWER}"; unset UV_EXCLUDE_NEWER; \
+    if [ -n "$_uv_exclude_newer" ]; then \
+        uv sync --frozen --no-cache --exclude-newer "$_uv_exclude_newer"; \
     else \
         uv sync --frozen --no-cache; \
     fi
@@ -86,8 +87,9 @@ ARG UV_EXCLUDE_NEWER
 RUN apk add --no-cache \
     linux-headers
 
-RUN if [ -n "${UV_EXCLUDE_NEWER}" ]; then \
-        uv sync --frozen --no-cache --all-extras --exclude-newer "${UV_EXCLUDE_NEWER}"; \
+RUN _uv_exclude_newer="${UV_EXCLUDE_NEWER}"; unset UV_EXCLUDE_NEWER; \
+    if [ -n "$_uv_exclude_newer" ]; then \
+        uv sync --frozen --no-cache --all-extras --exclude-newer "$_uv_exclude_newer"; \
     else \
         uv sync --frozen --no-cache --all-extras; \
     fi
