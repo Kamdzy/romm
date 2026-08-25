@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import enum
 import re
+from collections.abc import Sequence
 from datetime import datetime
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict
@@ -34,7 +35,7 @@ from sqlalchemy.orm import (
     relationship,
     validates,
 )
-from sqlalchemy.orm.attributes import InstrumentedAttribute
+from sqlalchemy.orm.attributes import InstrumentedAttribute, set_committed_value
 
 from config import FRONTEND_RESOURCES_PATH
 from models.base import (
@@ -138,6 +139,7 @@ class RomFile(BaseModel):
 
     __table_args__ = (
         Index("idx_rom_files_rom_id", "rom_id"),
+        Index("idx_rom_files_rom_id_category", "rom_id", "category"),
         # Searching the gallery by a hash digest
         Index("idx_rom_files_crc_hash", "crc_hash"),
         Index("idx_rom_files_md5_hash", "md5_hash"),
@@ -384,6 +386,7 @@ class Rom(BaseModel):
             "tgdb_id",
             "flashpoint_id",
             "fs_name_no_ext",
+            "generated_primary_region",
             "id",
         ),
         Index("idx_roms_platform_fs_size", "platform_id", "fs_size_bytes"),
@@ -487,6 +490,14 @@ class Rom(BaseModel):
     regions: Mapped[list[str] | None] = mapped_column(CustomJSON(), default=[])
     languages: Mapped[list[str] | None] = mapped_column(CustomJSON(), default=[])
     tags: Mapped[list[str] | None] = mapped_column(CustomJSON(), default=[])
+
+    # STORED generated column over regions[0], carried by idx_roms_sibling_cover
+    # so the dedup window can rank regions without reading the JSON.
+    generated_primary_region: Mapped[str | None] = mapped_column(
+        String(length=50),
+        server_default=FetchedValue(),
+        server_onupdate=FetchedValue(),
+    )
 
     crc_hash: Mapped[str | None] = mapped_column(String(length=100))
     md5_hash: Mapped[str | None] = mapped_column(String(length=100))
@@ -767,6 +778,31 @@ Rom.top_level_file_count = column_property(
     .scalar_subquery(),
     deferred=True,
 )
+
+
+def apply_file_stats(rom: Rom, files: Sequence[RomFile]) -> None:
+    """Fill the deferred file-stat columns from an already-loaded file list.
+
+    Mirrors the subqueries above, not `RomFile.is_top_level`, which disagrees
+    on nested files.
+    """
+    set_committed_value(
+        rom, "multi_file", any(f.file_path != rom.fs_path for f in files)
+    )
+    set_committed_value(
+        rom,
+        "top_level_file_count",
+        sum(
+            1
+            for f in files
+            if f.full_path == rom.full_path or f.file_path == rom.full_path
+        ),
+    )
+    set_committed_value(
+        rom,
+        "has_soundtrack",
+        any(f.category == RomFileCategory.SOUNDTRACK for f in files),
+    )
 
 
 # Maps a metadata-source slug (matching the MetadataSource enum) to the Rom
