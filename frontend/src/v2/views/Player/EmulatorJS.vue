@@ -39,23 +39,23 @@ import { useI18n } from "vue-i18n";
 import type { FirmwareSchema, SaveSchema, StateSchema } from "@/__generated__";
 import firmwareApi from "@/services/api/firmware";
 import romApi from "@/services/api/rom";
-import socket from "@/services/socket";
-import storeAuth from "@/stores/auth";
 import storeConfig from "@/stores/config";
 import storePlaying from "@/stores/playing";
 import type { DetailedRom } from "@/stores/roms";
 import type { Events } from "@/types/emitter";
-import { getSupportedEJSCores } from "@/utils";
+import { areThreadsRequiredForEJSCore, getSupportedEJSCores } from "@/utils";
 import AssetPreview from "@/v2/components/Player/AssetPreview.vue";
 import AssetList from "@/v2/components/shared/AssetList.vue";
 import AssetStrip from "@/v2/components/shared/AssetStrip.vue";
 import GameCover from "@/v2/components/shared/GameCover.vue";
+import { useActivityPresence } from "@/v2/composables/useActivityPresence";
 import { useCoverArt } from "@/v2/composables/useCoverArt";
 import { useFullscreenPref } from "@/v2/composables/useFullscreenPref";
 import { useInputModality } from "@/v2/composables/useInputModality";
 import { usePlaySession } from "@/v2/composables/usePlaySession";
 import { usePlayerHero } from "@/v2/composables/usePlayerHero";
 import { usePlayerNav } from "@/v2/composables/usePlayerNav";
+import { useSnackbar } from "@/v2/composables/useSnackbar";
 import { useUnloadGuard } from "@/v2/composables/useUnloadGuard";
 import type { SliderBtnGroupItem } from "@/v2/lib/primitives/RSliderBtnGroup/types";
 import {
@@ -82,8 +82,8 @@ const Player = defineAsyncComponent(
 );
 
 const { t } = useI18n();
+const snackbar = useSnackbar();
 const emitter = inject<Emitter<Events>>("emitter");
-const auth = storeAuth();
 const playingStore = storePlaying();
 const configStore = storeConfig();
 const { playing, fullScreen } = storeToRefs(playingStore);
@@ -120,52 +120,7 @@ const removeIOSFullscreenShim = ref<(() => void) | null>(null);
 
 useUnloadGuard(gameRunning);
 
-// ── Live activity ("now playing") ──────────────────────────────────
-const ACTIVITY_HEARTBEAT_MS = 30_000;
-let activityHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
-
-function activityDeviceId(): string {
-  return auth.user?.current_device_id ?? "web";
-}
-
-function emitActivityStart() {
-  if (!auth.user || !rom.value) return;
-  if (!socket.connected) socket.connect();
-  socket.emit("activity:start", {
-    rom_id: rom.value.id,
-    device_id: activityDeviceId(),
-  });
-}
-
-function emitActivityHeartbeat() {
-  if (!auth.user || !rom.value) return;
-  socket.emit("activity:heartbeat", {
-    rom_id: rom.value.id,
-    device_id: activityDeviceId(),
-  });
-}
-
-function emitActivityStop() {
-  if (!auth.user) return;
-  socket.emit("activity:stop", {
-    device_id: activityDeviceId(),
-  });
-}
-
-function startActivityHeartbeat() {
-  if (activityHeartbeatTimer) return;
-  activityHeartbeatTimer = setInterval(
-    emitActivityHeartbeat,
-    ACTIVITY_HEARTBEAT_MS,
-  );
-}
-
-function stopActivityHeartbeat() {
-  if (activityHeartbeatTimer) {
-    clearInterval(activityHeartbeatTimer);
-    activityHeartbeatTimer = null;
-  }
-}
+const presence = useActivityPresence(() => rom.value?.id);
 
 declare global {
   interface Navigator {
@@ -232,6 +187,17 @@ useEventListener(document, "fullscreenchange", () => {
 });
 
 async function onPlay() {
+  // Threaded cores need SharedArrayBuffer, which browsers only expose on a
+  // secure context (HTTPS or localhost), whatever headers the server sends.
+  if (
+    selectedCore.value &&
+    areThreadsRequiredForEJSCore(selectedCore.value) &&
+    typeof window.SharedArrayBuffer !== "function"
+  ) {
+    snackbar.error(t("play.https-required"));
+    return;
+  }
+
   // Launch flourish on the visible cover (disc drop+spin / cartridge
   // slot-in) before booting, so the insert is seen. Returns 0 for non-
   // physical styles / reduced motion → no delay.
@@ -413,13 +379,12 @@ onMounted(async () => {
 watch(gameRunning, (running, prev) => {
   if (running && !prev) {
     if (rom.value) playSession.start(rom.value);
-    emitActivityStart();
-    startActivityHeartbeat();
+    presence.start();
   }
   if (prev && !running) {
     playSession.flush();
-    stopActivityHeartbeat();
-    emitActivityStop();
+    presence.stopHeartbeat();
+    presence.emitStop();
     nextTick(focusPlayButton);
   }
 });
@@ -437,8 +402,8 @@ onBeforeUnmount(() => {
   // the user never exited the game to the config screen first. flush() is
   // idempotent, so an exit that already flushed via the watch is a no-op.
   playSession.flush();
-  stopActivityHeartbeat();
-  emitActivityStop();
+  presence.stopHeartbeat();
+  presence.emitStop();
   // Hand the keyboard and gamepad back to the UI; the flag otherwise
   // stays true and pad/hotkey navigation is dead until a reload.
   playing.value = false;

@@ -6,6 +6,7 @@
 // orchestrator — data + tab state live here, every visual piece is a
 // sub-component under components/GameDetails/.
 import { RTabNav, type RTabNavItem } from "@v2/lib";
+import { formatReleaseDate } from "@v2/utils/time";
 import { storeToRefs } from "pinia";
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -14,6 +15,7 @@ import type { IGDBRelatedGame } from "@/__generated__";
 import romApi from "@/services/api/rom";
 import storeAuth from "@/stores/auth";
 import storeRoms from "@/stores/roms";
+import { useStreamingStore } from "@/stores/streaming";
 import { toBrowserLocale } from "@/utils";
 import AchievementsTab from "@/v2/components/GameDetails/AchievementsTab.vue";
 import CoverColumn from "@/v2/components/GameDetails/CoverColumn.vue";
@@ -37,6 +39,7 @@ const route = useRoute();
 const router = useRouter();
 const romsStore = storeRoms();
 const authStore = storeAuth();
+const streamingStore = useStreamingStore();
 const { currentRom } = storeToRefs(romsStore);
 const { toWebp } = useWebpSupport();
 const { locale, t } = useI18n();
@@ -112,18 +115,12 @@ const platformLabel = computed(() => {
   return r.platform_custom_name || r.platform_display_name;
 });
 
-const releaseDate = computed(() => {
-  const ts = currentRom.value?.metadatum?.first_release_date;
-  if (!ts) return null;
-  return new Date(Number(ts)).toLocaleDateString(
+const releaseDate = computed(() =>
+  formatReleaseDate(
+    currentRom.value?.metadatum?.first_release_date,
     toBrowserLocale(locale.value),
-    {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    },
-  );
-});
+  ),
+);
 
 const genres = computed(() => currentRom.value?.metadatum?.genres ?? []);
 const franchises = computed(
@@ -162,6 +159,19 @@ watch(
   resolvedCover,
   (url) => {
     if (url) setBgArt(url);
+  },
+  { immediate: true },
+);
+
+// Fills the store the Join action reads from. Done here rather than in the
+// action composable because that one is instantiated per button; navigating
+// between ROMs reuses this component, so it re-runs on the id. Forced, since
+// this is the page a user acts on: a session that ended in the meantime must
+// not still be offered.
+watch(
+  () => currentRom.value?.id ?? null,
+  (romId) => {
+    if (romId != null) void streamingStore.fetchJoinableSessions(true);
   },
   { immediate: true },
 );
