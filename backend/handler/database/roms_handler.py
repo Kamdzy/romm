@@ -63,6 +63,7 @@ from models.rom import (
     RomFileCategory,
     RomFileDocMeta,
     RomFileUser,
+    RomIdentityKey,
     RomMetadata,
     RomNote,
     RomUser,
@@ -74,10 +75,13 @@ from models.rom import (
 from utils import get_version
 from utils.database import (
     LIKE_ESCAPE_CHAR,
+    epoch_ms_in_ranges,
     escape_like,
+    is_postgresql,
     json_array_contains_all,
     json_array_contains_any,
     json_array_contains_value,
+    release_day_ranges,
 )
 from utils.platform_slugs import UniversalPlatformSlug as UPS
 
@@ -1283,6 +1287,8 @@ class DBRomsHandler(DBBaseHandler):
         tags_logic: str = "any",
         user_id: int | None = None,
         updated_after: datetime | None = None,
+        released_days: Sequence[tuple[int, int]] | None = None,
+        released_before_year: int | None = None,
         include_file_stats: bool = False,
         include_files: bool = False,
         include_related: bool = True,
@@ -1412,6 +1418,14 @@ class DBRomsHandler(DBBaseHandler):
         if updated_after:
             query = query.filter(Rom.updated_at > updated_after)
 
+        if released_days:
+            query = query.filter(
+                epoch_ms_in_ranges(
+                    Rom.generated_first_release_date,
+                    release_day_ranges(released_days, before_year=released_before_year),
+                )
+            )
+
         # Only join the metadata table when a filter reads from it. The dedup
         # subquery below is derived from `query`, so the join has to land before
         # the filters, or that subquery inherits them without it.
@@ -1495,6 +1509,7 @@ class DBRomsHandler(DBBaseHandler):
                     Rom.launchbox_id,
                     Rom.tgdb_id,
                     Rom.flashpoint_id,
+                    Rom.steam_id,
                 )
                 .subquery()
             )
@@ -1553,6 +1568,11 @@ class DBRomsHandler(DBBaseHandler):
                             _create_metadata_id_case(
                                 MetadataSource.FLASHPOINT,
                                 base_subquery.c.flashpoint_id,
+                                base_subquery.c.platform_id,
+                            ),
+                            _create_metadata_id_case(
+                                MetadataSource.STEAM,
+                                base_subquery.c.steam_id,
                                 base_subquery.c.platform_id,
                             ),
                             _create_metadata_id_case(
@@ -1662,7 +1682,9 @@ class DBRomsHandler(DBBaseHandler):
             if relevance_clause is not None:
                 order_clauses.insert(0, relevance_clause)
 
-        return query.order_by(*order_clauses), order_attr_column  # type: ignore
+        # The id settles ties, so a page boundary can't repeat or skip a row
+        # when the sort column holds duplicates.
+        return query.order_by(*order_clauses, Rom.id.asc()), order_attr_column  # type: ignore
 
     @begin_session
     def get_roms_scalar(
@@ -1729,6 +1751,8 @@ class DBRomsHandler(DBBaseHandler):
             metadata_providers_logic=kwargs.get("metadata_providers_logic", "any"),
             tags_logic=kwargs.get("tags_logic", "any"),
             user_id=kwargs.get("user_id", None),
+            released_days=kwargs.get("released_days", None),
+            released_before_year=kwargs.get("released_before_year", None),
             group_by_meta_id=kwargs.get("group_by_meta_id", False),
             include_files=kwargs.get("include_files", False),
             hidden_platform_ids=kwargs.get("hidden_platform_ids", None),
@@ -3433,6 +3457,20 @@ class DBRomsHandler(DBBaseHandler):
             "tags": sorted(tags),
             "platforms": sorted(platforms),
         }
+
+    @begin_session
+    def refresh_identity_key_statistics(
+        self,
+        *,
+        session: Session = None,  # type: ignore
+    ) -> None:
+        """Resample `rom_identity_keys` so the sibling join keeps its indexed plan.
+
+        Migration 0127's sample lands on an empty table on a fresh install, and
+        InnoDB's auto-recalc refreshes the stored row count without replanning.
+        """
+        keyword = "ANALYZE" if is_postgresql(session.connection()) else "ANALYZE TABLE"
+        session.execute(text(f"{keyword} {RomIdentityKey.__tablename__}"))
 
     def invalidate_filter_values_cache(self) -> None:
         old_version = str(int(sync_cache.incr(ROM_FILTERS_CACHE_VERSION_KEY)) - 1)
