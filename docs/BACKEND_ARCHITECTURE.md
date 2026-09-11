@@ -412,11 +412,18 @@ HTTP Request
 
 ### Supported Databases
 
-| Database      | Driver                | Status    |
-| ------------- | --------------------- | --------- |
-| MariaDB 10.5+ | `mariadb+pymysql`     | Default   |
-| MySQL 8.0+    | `mysql+pymysql`       | Supported |
-| PostgreSQL    | `postgresql+psycopg2` | Supported |
+| Database       | Driver                | Status    |
+| -------------- | --------------------- | --------- |
+| MariaDB 10.11+ | `mariadb+pymysql`     | Default   |
+| MySQL 8.0+     | `mysql+pymysql`       | Supported |
+| PostgreSQL     | `postgresql+psycopg2` | Supported |
+
+MariaDB 10.5 and 10.6 reached upstream end of life in June 2025 and July 2026, so
+10.11 is the oldest LTS still receiving fixes.
+
+CI runs the test suite against MariaDB 12.3 and PostgreSQL 16, and the migration
+suite additionally against MariaDB 10.11, which predates the 11.6 `uca1400`
+collation default. MySQL has no CI coverage.
 
 ### Engine & Session Setup
 
@@ -1545,14 +1552,16 @@ Falls back to `FakeRedis` in test mode.
 
 #### Database
 
-| Variable         | Default   | Description                         |
-| ---------------- | --------- | ----------------------------------- |
-| `ROMM_DB_DRIVER` | `mariadb` | `mariadb`, `mysql`, or `postgresql` |
-| `DB_HOST`        |           | Database host                       |
-| `DB_PORT`        | `3306`    | Database port                       |
-| `DB_USER`        |           | Database user                       |
-| `DB_PASSWD`      |           | Database password                   |
-| `DB_NAME`        | `romm`    | Database name                       |
+| Variable                  | Default   | Description                                                        |
+| ------------------------- | --------- | ------------------------------------------------------------------ |
+| `ROMM_DB_DRIVER`          | `mariadb` | `mariadb`, `mysql`, or `postgresql`                                |
+| `DB_HOST`                 |           | Database host                                                      |
+| `DB_PORT`                 | `3306`    | Database port                                                      |
+| `DB_USER`                 |           | Database user                                                      |
+| `DB_PASSWD`               |           | Database password                                                  |
+| `DB_NAME`                 | `romm`    | Database name                                                      |
+| `DB_QUERY_JSON`           |           | Extra connection parameters, as JSON                               |
+| `DB_POOL_RECYCLE_SECONDS` | `300`     | Retire a pooled connection after this long (`-1` to never recycle) |
 
 #### Redis
 
@@ -1687,6 +1696,8 @@ scan:
 
 emulatorjs:
   debug: false
+  default_cores:
+    nds: desmume # platform slug → core preselected in the player
   netplay:
     enabled: false
     ice_servers:
