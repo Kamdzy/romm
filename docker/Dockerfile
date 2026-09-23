@@ -66,7 +66,6 @@ FROM ghcr.io/astral-sh/uv:${UV_VERSION}-python${PYTHON_VERSION}-alpine@sha256:${
 
 # BACKEND PYTHON BUILD
 FROM python-alias AS backend-build
-ARG UV_EXCLUDE_NEWER
 
 # libpq-dev is needed to build psycopg-c
 # mariadb-connector-c-dev is needed to build mariadb-connector
@@ -81,26 +80,15 @@ COPY --from=uv-stage /usr/local/bin/uv /usr/local/bin/uvx /bin/
 WORKDIR /src
 
 COPY ./pyproject.toml ./uv.lock /src/
-RUN _uv_exclude_newer="${UV_EXCLUDE_NEWER}"; unset UV_EXCLUDE_NEWER; \
-    if [ -n "$_uv_exclude_newer" ]; then \
-        uv sync --frozen --no-cache --exclude-newer "$_uv_exclude_newer"; \
-    else \
-        uv sync --frozen --no-cache; \
-    fi
+RUN uv sync --frozen --no-cache
 
 FROM backend-build AS backend-dev-build
-ARG UV_EXCLUDE_NEWER
 
 # linux-headers is needed to install psutil
 RUN apk add --no-cache \
     linux-headers
 
-RUN _uv_exclude_newer="${UV_EXCLUDE_NEWER}"; unset UV_EXCLUDE_NEWER; \
-    if [ -n "$_uv_exclude_newer" ]; then \
-        uv sync --frozen --no-cache --all-extras --exclude-newer "$_uv_exclude_newer"; \
-    else \
-        uv sync --frozen --no-cache --all-extras; \
-    fi
+RUN uv sync --frozen --no-cache --all-extras
 
 
 # CUSTOM RAHASHER FOR RETROACHIEVEMENTS
