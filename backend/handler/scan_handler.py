@@ -4,7 +4,7 @@ import functools
 from typing import Any
 
 import pydash
-import socketio  # type: ignore
+import socketio
 
 from adapters.services.screenscraper import ScreenScraperRateLimitError
 from config.config_manager import config_manager as cm
@@ -80,7 +80,11 @@ from models.user import User
 from utils import emoji
 from utils.audio_tags import persist_embedded_cover, remove_persisted_cover
 from utils.filesystem import sanitize_filename
-from utils.platform_aliases import resolve_fs_slug, resolve_platform_slug
+from utils.platform_aliases import (
+    resolve_fs_folder,
+    resolve_fs_slug,
+    resolve_platform_slug,
+)
 
 LOGGER_MODULE_NAME = {"module_name": "scan"}
 
@@ -125,6 +129,12 @@ class MetadataSource(enum.StrEnum):
 SCENE_METADATA_SOURCES = frozenset(
     {MetadataSource.DEMOZOO, MetadataSource.POUET, MetadataSource.CSDB}
 )
+
+# Sources that report the dump a hash matched rather than the title. Their tags
+# fill an empty slot only: a filename and a gamelist.xml are curated with the
+# library, so they own these fields and the locale pickers read them back.
+HASH_MATCHED_TAG_SOURCES = frozenset({MetadataSource.SS, MetadataSource.HASHEOUS})
+PROVIDER_TAG_FIELDS = ("regions", "languages")
 
 
 def scene_apply_sources(
@@ -213,12 +223,15 @@ def get_priority_ordered_metadata_sources(
             priority_type, cnfg.SCAN_ARTWORK_PRIORITY
         )
 
-    # Filter priority order to only include sources that are available
-    ordered_sources = [
-        MetadataSource(source)
-        for source in priority_order
-        if source in metadata_sources
-    ]
+    # Filter priority order to only include sources that are available. A
+    # source listed twice in config.yml keeps its first position.
+    ordered_sources = list(
+        dict.fromkeys(
+            MetadataSource(source)
+            for source in priority_order
+            if source in metadata_sources
+        )
+    )
 
     # Add any remaining sources that weren't in the priority list
     remaining_sources = [
@@ -289,7 +302,11 @@ async def scan_platform(
         if platform:
             known_fs_slug = resolve_fs_slug(platform.slug, cnfg)
             if known_fs_slug:
-                platform_attrs["fs_slug"] = known_fs_slug
+                # `resolve_fs_slug` answers with a lowercased config key, but
+                # every path is built from the folder's own casing.
+                platform_attrs["fs_slug"] = (
+                    resolve_fs_folder(known_fs_slug, fs_platforms) or known_fs_slug
+                )
 
     platform_attrs["slug"] = resolve_platform_slug(fs_slug, cnfg)
 
@@ -375,7 +392,7 @@ async def scan_firmware(
     firmware_path = fs_firmware_handler.get_firmware_fs_structure(platform.fs_slug)
 
     # Set default properties
-    firmware_attrs = {
+    firmware_attrs: dict[str, Any] = {
         "id": firmware.id if firmware else None,
         "platform_id": platform.id,
     }
@@ -483,7 +500,6 @@ async def scan_rom(
     metadata_sources: list[str],
     newly_added: bool,
     launchbox_remote_enabled: bool = True,
-    playmatch_enabled: bool = True,
     socket_manager: socketio.AsyncRedisManager | None = None,
 ) -> Rom:
     rom_attrs = {
@@ -582,6 +598,17 @@ async def scan_rom(
     # no id for it never enters the set, so a rescan can't clear what it can't redo.
     attempted_sources: set[MetadataSource] = set()
 
+    # Sources this scan asked and never got an answer from. A miss they did not
+    # rule out is not a coverage gap, so the outcome must not be reported as one.
+    inconclusive_sources: set[MetadataSource] = set()
+
+    def note_inconclusive(source: MetadataSource) -> None:
+        """Record a source that was consulted and never answered."""
+        # It ruled nothing out, so it stops counting as attempted too and a
+        # complete rescan keeps the id it already had.
+        attempted_sources.discard(source)
+        inconclusive_sources.add(source)
+
     def resolve_fetch(source: MetadataSource, result: Any, fallback: Any) -> Any:
         """Unwrap a gathered lookup, falling back to an empty match when it failed."""
         if not isinstance(result, BaseException):
@@ -589,9 +616,7 @@ async def scan_rom(
         if not isinstance(result, Exception):
             raise result
 
-        # A provider that blew up ruled nothing out, so it no longer counts as
-        # attempted and a complete rescan keeps the id it already had.
-        attempted_sources.discard(source)
+        note_inconclusive(source)
         log.error(
             f"Error fetching {hl(source)} metadata for {hl(rom_attrs['fs_name'])}: {result}",
             extra=LOGGER_MODULE_NAME,
@@ -648,9 +673,15 @@ async def scan_rom(
                 )
             )
         ):
-            return await meta_hasheous_handler.lookup_rom(
+            match, conclusive = await meta_hasheous_handler.lookup_rom(
                 platform.slug, get_match_files()
             )
+            # Hasheous swallows its own failures, so an empty match that is not
+            # conclusive is the only sign the lookup never got an answer. A
+            # disabled handler reports the same flag without being consulted.
+            if not conclusive and meta_hasheous_handler.is_enabled():
+                note_inconclusive(MetadataSource.HASHEOUS)
+            return match, conclusive
 
         return (
             HasheousRom(hasheous_id=None, igdb_id=None, tgdb_id=None, ra_id=None),
@@ -999,7 +1030,7 @@ async def scan_rom(
                 return SSRom(ss_id=None)
             finally:
                 if short_circuited:
-                    attempted_sources.discard(MetadataSource.SS)
+                    note_inconclusive(MetadataSource.SS)
 
         return SSRom(ss_id=None)
 
@@ -1088,7 +1119,10 @@ async def scan_rom(
                 )
             )
         ):
-            attempted_sources.add(MetadataSource.HASHEOUS)
+            # The hash lookup is the only thing that identifies a rom here, so one
+            # that never answered leaves a complete rescan nothing to redo.
+            if MetadataSource.HASHEOUS not in inconclusive_sources:
+                attempted_sources.add(MetadataSource.HASHEOUS)
             (
                 igdb_game,
                 ra_game,
@@ -1381,8 +1415,32 @@ async def scan_rom(
         handler_data = metadata_handlers[source_name]["handler"]
         # Only update fields that have valid values
         for key, field_value in handler_data.items():
+            if key in PROVIDER_TAG_FIELDS and source_name in HASH_MATCHED_TAG_SOURCES:
+                continue
             if field_value:
                 rom_attrs[key] = field_value
+
+    # Re-read rather than taken off the row, which cannot say whether its value
+    # is a tag the user wrote or what a provider left there on an earlier scan.
+    filename_tags = fs_rom_handler.parse_tags(rom_attrs["fs_name"])
+    local_tags = {
+        "regions": filename_tags.regions,
+        "languages": filename_tags.languages,
+    }
+    for field in PROVIDER_TAG_FIELDS:
+        if local_tags[field] or any(
+            metadata_handlers[source_name]["handler"].get(field)
+            for source_name in priority_ordered
+            if source_name not in HASH_MATCHED_TAG_SOURCES
+        ):
+            continue
+        for source_name in priority_ordered:
+            if source_name not in HASH_MATCHED_TAG_SOURCES:
+                continue
+            field_value = metadata_handlers[source_name]["handler"].get(field)
+            if field_value:
+                rom_attrs[field] = field_value
+                break
 
     # Artwork sources are prioritized separately, and each field can carry its
     # own override on top of the shared artwork priority.
@@ -1470,10 +1528,22 @@ async def scan_rom(
         and not rom_attrs.get("steam_id")
         and not rom_attrs.get("gamelist_id")
     ):
-        log.warning(
-            f"{hl(rom_attrs['fs_name'])} not identified {emoji.EMOJI_CROSS_MARK}",
-            extra=LOGGER_MODULE_NAME,
-        )
+        if inconclusive_sources:
+            # Reporting a plain "not identified" here writes the ROM up as a
+            # coverage gap the providers confirmed, when one of them simply
+            # never answered.
+            silent = ", ".join(hl(source) for source in sorted(inconclusive_sources))
+            log.warning(
+                f"{hl(rom_attrs['fs_name'])} not identified, but {silent} gave "
+                f"no answer, so this is not a confirmed miss - an UNMATCHED "
+                f"scan will retry it {emoji.EMOJI_WARNING}",
+                extra=LOGGER_MODULE_NAME,
+            )
+        else:
+            log.warning(
+                f"{hl(rom_attrs['fs_name'])} not identified {emoji.EMOJI_CROSS_MARK}",
+                extra=LOGGER_MODULE_NAME,
+            )
         return Rom(**rom_attrs)
 
     async def fetch_sgdb_details(playmatch_rom: PlaymatchRomMatch) -> SGDBRom:

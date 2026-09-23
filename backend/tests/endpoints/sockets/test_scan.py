@@ -743,7 +743,6 @@ class TestIdentifyRomTagReparse:
             roms_ids=roms_ids,
             metadata_sources=[],
             launchbox_remote_enabled=False,
-            playmatch_enabled=False,
             socket_manager=AsyncMock(),
             scan_stats=AsyncMock(),
             scanned_rom_ids=set(),
@@ -909,7 +908,6 @@ async def run_identify_rom(platform: Platform, fs_rom: FSRom) -> None:
         roms_ids=[],
         metadata_sources=[],
         launchbox_remote_enabled=False,
-        playmatch_enabled=False,
         socket_manager=AsyncMock(),
         scan_stats=AsyncMock(),
         scanned_rom_ids=set(),
@@ -1233,7 +1231,6 @@ class TestIdentifyPlatformMarksMissingBeforeScan:
             roms_ids=[],
             metadata_sources=[],
             launchbox_remote_enabled=False,
-            playmatch_enabled=False,
             socket_manager=AsyncMock(),
             scan_stats=AsyncMock(),
             scanned_rom_ids=set(),
@@ -1320,7 +1317,6 @@ class TestIdentifyPlatformEmitsRestoredRoms:
             roms_ids=[],
             metadata_sources=[],
             launchbox_remote_enabled=False,
-            playmatch_enabled=False,
             socket_manager=socket_manager,
             scan_stats=AsyncMock(),
             scanned_rom_ids=set(),
@@ -1434,7 +1430,6 @@ class TestIdentifyPlatformFirmwareReporting:
             roms_ids=[],
             metadata_sources=[],
             launchbox_remote_enabled=False,
-            playmatch_enabled=False,
             socket_manager=socket_manager,
             scan_stats=AsyncMock(),
             scanned_rom_ids=set(),
@@ -1681,7 +1676,6 @@ class TestScanSelectedRoms:
             roms_ids=[rom.id],
             metadata_sources=[],
             launchbox_remote_enabled=False,
-            playmatch_enabled=False,
             socket_manager=AsyncMock(),
             scan_stats=AsyncMock(),
             scanned_rom_ids=set(),
@@ -1726,7 +1720,6 @@ class TestScanSelectedRoms:
             roms_ids=[rom.id],
             metadata_sources=[],
             launchbox_remote_enabled=False,
-            playmatch_enabled=False,
             socket_manager=AsyncMock(),
             scan_stats=AsyncMock(),
             scanned_rom_ids=set(),
@@ -1761,7 +1754,6 @@ class TestScanSelectedRoms:
             roms_ids=[rom.id],
             metadata_sources=[],
             launchbox_remote_enabled=False,
-            playmatch_enabled=False,
             socket_manager=AsyncMock(),
             scan_stats=AsyncMock(),
             scanned_rom_ids=set(),
@@ -1793,7 +1785,6 @@ class TestScanSelectedRoms:
                 roms_ids=[rom.id],
                 metadata_sources=[],
                 launchbox_remote_enabled=False,
-                playmatch_enabled=False,
                 socket_manager=AsyncMock(),
                 scan_stats=AsyncMock(),
                 scanned_rom_ids=set(),
@@ -1830,12 +1821,17 @@ class TestScopedScanSkipsLibraryWork:
         async def fake_scoped(**kwargs):
             return kwargs["scan_stats"]
 
+        # Returning a real ScanStats: a bare AsyncMock's return value is another
+        # AsyncMock, whose to_dict() would leak a coroutine out of finish().
+        async def fake_identify(*, scan_stats: ScanStats, **_: object) -> ScanStats:
+            return scan_stats
+
         return {
             "scoped": mocker.patch.object(
                 scan_module, "_scan_selected_roms", side_effect=fake_scoped
             ),
             "identify_platform": mocker.patch.object(
-                scan_module, "_identify_platform", side_effect=AsyncMock()
+                scan_module, "_identify_platform", side_effect=fake_identify
             ),
             "get_platforms": mocker.patch.object(
                 scan_module.fs_platform_handler, "get_platforms", AsyncMock()
@@ -2592,7 +2588,6 @@ def identify_harness(mocker):
             roms_ids=roms_ids,
             metadata_sources=[],
             launchbox_remote_enabled=False,
-            playmatch_enabled=False,
             socket_manager=socket_manager or AsyncMock(),
             scan_stats=scan_stats or AsyncMock(),
             scanned_rom_ids=set(),
@@ -2756,7 +2751,6 @@ class TestIdentifyPlatformLoadsFilesForQuickScan:
             roms_ids=[],
             metadata_sources=[],
             launchbox_remote_enabled=False,
-            playmatch_enabled=False,
             socket_manager=AsyncMock(),
             scan_stats=AsyncMock(),
             scanned_rom_ids=set(),

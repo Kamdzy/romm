@@ -9,6 +9,7 @@
 // Per-ROM action menus are not app-wide: each GameCard owns its own
 // `MoreMenu` dropdown on the three-dots button. Right-click is left to
 // the browser so "Open in new tab" etc. keep working.
+import { useEventListener, useThrottleFn } from "@vueuse/core";
 import {
   defineAsyncComponent,
   onBeforeUnmount,
@@ -19,6 +20,7 @@ import {
 } from "vue";
 import { useRouter } from "vue-router";
 import storeCollections from "@/stores/collections";
+import { useNativeStore } from "@/stores/native";
 import storePlatforms from "@/stores/platforms";
 import storePlaying from "@/stores/playing";
 import { useStreamingStore } from "@/stores/streaming";
@@ -36,7 +38,9 @@ import { installGalleryProvenance } from "@/v2/composables/useGalleryProvenance"
 import { useGamepad } from "@/v2/composables/useGamepad";
 import { useGlobalHotkeys } from "@/v2/composables/useGlobalHotkeys";
 import { useInputModality } from "@/v2/composables/useInputModality";
+import { installNativeLaunchFeedback } from "@/v2/composables/useNativeLaunch";
 import { installOverlayRouteDismiss } from "@/v2/composables/useOverlayRouteDismiss";
+import { installPendingAssetSync } from "@/v2/composables/usePendingAssetSync";
 import { prefetchPlatformIcons } from "@/v2/composables/usePlatformIconCache";
 import { useReducedMotion } from "@/v2/composables/useReducedMotion";
 import { installScanLifecycle } from "@/v2/composables/useScanLifecycle";
@@ -49,6 +53,9 @@ installPermissionsHydration();
 // route the user is on (navbar indicator + /scan view consume the same
 // store state).
 installScanLifecycle();
+// Saves and states a player could not hand over reach the server from any
+// route, so the next launch screen can offer them.
+installPendingAssetSync();
 // Mirror useBreakpoint() refs onto <html data-bp="…"> so scoped styles
 // can branch on viewport via `html[data-bp~="xs"] .foo { … }` instead of
 // hardcoding `@media (max-width: …)` values across every SFC.
@@ -73,8 +80,47 @@ watch(
 const collectionsStore = storeCollections();
 const platformsStore = storePlatforms();
 const streamingStore = useStreamingStore();
+const nativeStore = useNativeStore();
 
 const playingStore = storePlaying();
+
+// Snackbars for launches handed to the desktop shell. Installed in setup
+// because it injects the emitter; a no-op outside the shell.
+installNativeLaunchFeedback();
+
+// The native answer is per-platform, so unlike the streaming config the probe
+// needs the platform list. It watches for that list rather than hanging off
+// one fetch, because `fetchPlatforms` resolves empty when another view already
+// has one in flight. Re-probing is cheap: the store skips slugs it has
+// answered.
+watch(
+  // Serialized rather than joined: a slug comes from a folder name and may
+  // contain a comma, so ["a,b"] and ["a", "b"] would compare equal and a list
+  // that changed between them would never be probed.
+  () => JSON.stringify(platformsStore.allPlatforms.map((p) => p.slug)),
+  () => {
+    const slugs = platformsStore.allPlatforms.map((p) => p.slug);
+    if (slugs.length === 0) return;
+    void nativeStore.probe(slugs);
+  },
+  { immediate: true },
+);
+
+// The answer describes the user's machine, so installing an emulator (through
+// the shell's own settings or anywhere else) changes it with nothing here to
+// notice. Re-asked when the window comes back, which is when whatever did the
+// installing has just been in front. Throttled because alt-tabbing is cheap
+// and the shell answers this off the filesystem; a no-op outside the shell.
+const NATIVE_REPROBE_THROTTLE_MS = 10_000;
+useEventListener(
+  window,
+  "focus",
+  useThrottleFn(() => {
+    const slugs = platformsStore.allPlatforms.map((p) => p.slug);
+    if (slugs.length === 0) return;
+    void nativeStore.probe(slugs, { force: true });
+  }, NATIVE_REPROBE_THROTTLE_MS),
+);
 
 // Developer debug overlay — opt-in via Settings → Developer (per-device).
 // Lazily loaded so its chunk (and the vueuse perf hooks it pulls in) is only
@@ -191,16 +237,16 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="r-v2-shell">
+  <div class="r-v2-app-shell">
     <BackgroundArt
       :layer-a="layerA"
       :layer-b="layerB"
       :active-layer="activeLayer"
     />
 
-    <div class="r-v2-shell__app">
+    <div class="r-v2-app-shell__body">
       <AppNav v-if="!playingStore.stageActive" />
-      <main id="r-v2-main" class="r-v2-shell__main" tabindex="-1">
+      <main id="r-v2-main" class="r-v2-app-shell__main" tabindex="-1">
         <router-view name="v2" />
       </main>
       <BottomNav v-if="!playingStore.stageActive" />
@@ -224,9 +270,11 @@ onBeforeUnmount(() => {
        document overflow → no document scrollbar on those routes.
      · Views with natural flow (Home, Settings, Patcher, Scan, etc.)
        grow with content and the document scrolls. */
-.r-v2-shell {
+.r-v2-app-shell {
   color: var(--r-color-fg);
   position: relative;
+  /* Keep this class unique to the layout: Vue copies the parent scope id onto a
+     child's root element, so a route-root section reusing it inherits this. */
   /* `dvh` tracks the mobile visible viewport (address bar shown/hidden).
      `vh` (the large viewport) leaves the app taller than the screen while
      the bar is visible, forcing a second, document-level scroll on top of
@@ -235,16 +283,16 @@ onBeforeUnmount(() => {
   min-height: 100dvh;
 }
 
-.r-v2-shell__app {
+.r-v2-app-shell__body {
   position: relative;
   z-index: 2;
-  /* Matches .r-v2-shell so the absolutely-positioned BottomNav anchor
+  /* Matches .r-v2-app-shell so the absolutely-positioned BottomNav anchor
      spans the viewport even when the content is shorter than the screen. */
   min-height: 100vh;
   min-height: 100dvh;
 }
 
-.r-v2-shell__main {
+.r-v2-app-shell__main {
   position: relative;
   padding-top: var(--r-nav-h);
   outline: none;
@@ -256,7 +304,7 @@ onBeforeUnmount(() => {
    clear of the bar. Fixed-height views with their own internal scroll
    (galleries) subtract the same amount from their height calc so the
    totals still sum to one viewport with no document overflow. */
-html[data-bp~="sm-and-down"] .r-v2-shell__main {
+html[data-bp~="sm-and-down"] .r-v2-app-shell__main {
   padding-bottom: calc(var(--r-bottom-nav-h) + env(safe-area-inset-bottom));
 }
 </style>
