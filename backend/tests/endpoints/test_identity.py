@@ -10,11 +10,14 @@ import pytest
 from fastapi import status
 
 from config import OAUTH_ACCESS_TOKEN_EXPIRE_SECONDS
+from handler.auth import auth_handler
 from handler.auth import base_handler as auth_handler_module
 from handler.auth import oauth_handler
 from handler.auth.middleware.redis_session_middleware import RedisSessionMiddleware
+from handler.database import db_notification_handler
 from handler.database.users_handler import DBUsersHandler
 from handler.redis_handler import async_cache
+from models.notification import NotificationKind
 from models.user import Role, User
 
 
@@ -34,6 +37,25 @@ def test_login_logout(client, admin_user: User):
     response = client.post("/api/logout")
 
     assert response.status_code == status.HTTP_200_OK
+
+
+@pytest.mark.parametrize("known", [True, False])
+def test_forgot_password_answers_alike_and_sends_the_link_afterwards(
+    client, admin_user: User, known: bool
+):
+    with mock.patch.object(auth_handler, "send_password_reset_link") as send_link:
+        response = client.post(
+            "/api/forgot-password",
+            json={"username": admin_user.username if known else "nobody"},
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() is None
+    if known:
+        send_link.assert_called_once()
+        assert send_link.call_args.args[0].id == admin_user.id
+    else:
+        send_link.assert_not_called()
 
 
 def test_get_all_users(client, access_token: str):
@@ -196,6 +218,34 @@ def test_update_user(client, access_token: str, editor_user: User):
 
     user = response.json()
     assert user["role"] == "user"
+
+
+def test_role_change_notifies_the_user(
+    client, access_token: str, admin_user: User, editor_user: User
+):
+    response = client.put(
+        f"/api/users/{editor_user.id}",
+        data={"role": "admin"},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert response.status_code == status.HTTP_200_OK
+
+    [notification] = db_notification_handler.get_notifications(editor_user.id)
+    assert notification.kind == NotificationKind.ROLE_CHANGED
+    assert notification.actor_id == admin_user.id
+    assert notification.data == {"role": "admin"}
+
+
+def test_resubmitting_the_same_role_notifies_nobody(
+    client, access_token: str, editor_user: User
+):
+    client.put(
+        f"/api/users/{editor_user.id}",
+        data={"role": "user"},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    assert db_notification_handler.get_notifications(editor_user.id) == []
 
 
 def test_update_user_rejects_non_image_avatar(
