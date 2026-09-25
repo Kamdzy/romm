@@ -193,7 +193,9 @@ backend/
 │   ├── search.py              # Cross-provider metadata search
 │   ├── states.py              # Save state management
 │   ├── stats.py               # Library statistics
-│   ├── sync.py                # Device sync sessions (push/pull, SSH)
+│   ├── sync/                  # Device sync
+│   │   ├── __init__.py        # Sync sessions (push/pull, SSH)
+│   │   └── retroarch.py       # RetroArch Cloud Sync WebDAV surface
 │   ├── tasks.py               # Task monitoring & triggering
 │   ├── roms/                  # ROM-specific endpoints
 │   │   ├── __init__.py        # ROM CRUD, download, bulk ops
@@ -760,6 +762,23 @@ Token format: `rmm_` + 64 hex chars (32-byte random)
 
 ---
 
+#### Audit Events
+
+**Table:** `audit_events` (what users and background jobs did, kept `AUDIT_LOG_RETENTION_DAYS`)
+
+| Column                                                  | Type       | Notes                                         |
+| ------------------------------------------------------- | ---------- | --------------------------------------------- |
+| `id`                                                    | Integer    | PK                                            |
+| `occurred_at`                                           | Timestamp  | For a synced play, when it started            |
+| `actor_kind`                                            | String(16) | `user`, `anonymous` or `system`               |
+| `actor_id`                                              | FK → users | `SET NULL` on delete                          |
+| `action`                                                | String(64) | `AuditAction`, e.g. `rom.download`            |
+| `actor_name`, `target_type`, `target_id`, `target_name` | String     | Snapshots, so an event outlives what it names |
+| `ip_address`, `device_id`                               | String     | No FK                                         |
+| `data`                                                  | JSON       | What the client builds the sentence from      |
+
+---
+
 #### Firmware
 
 **Table:** `firmware`
@@ -800,7 +819,7 @@ Migrations support batch mode for SQLite and DB-specific SQL for MariaDB/MySQL/P
 
 **Base URL:** `/api`
 **Documentation:** Swagger UI at `/api/docs`, ReDoc at `/api/redoc`
-**Pagination:** `fastapi-pagination` with `LimitOffsetParams` (`limit`, `offset`, `total`)
+**Pagination:** `PageParams` (`limit`, `offset`) via the `PAGE_QUERY` dependency, returning a `LimitOffsetPage` (`items`, `total`, `limit`, `offset`); both live in `endpoints/responses/base.py`. Routes with a smaller page cap subclass `PageParams` (`MusicPageParams`, `AuditPageParams`)
 
 ### 6.1 Authentication (`/api`)
 
@@ -923,20 +942,65 @@ Facet endpoints (`/artists`, `/albums`, `/genres`, `/years`) return `{value, cou
 | GET    | `/{id}/content`    | ASSETS_READ   | Download save file                      |
 | POST   | `/{id}/downloaded` | DEVICES_WRITE | Confirm download (device sync)          |
 | PUT    | `/{id}`            | ASSETS_WRITE  | Update save                             |
+| PUT    | `/{id}/file-name`  | ASSETS_WRITE  | Rename save file and its screenshot     |
 | POST   | `/delete`          | ASSETS_WRITE  | Bulk delete                             |
 | POST   | `/{id}/track`      | DEVICES_WRITE | Re-enable sync tracking                 |
 | POST   | `/{id}/untrack`    | DEVICES_WRITE | Disable sync tracking                   |
 
 ### 6.9 States (`/api/states`)
 
-| Method | Path           | Scope        | Description   |
-| ------ | -------------- | ------------ | ------------- |
-| POST   | `/`            | ASSETS_WRITE | Upload state  |
-| GET    | `/`            | ASSETS_READ  | List states   |
-| GET    | `/identifiers` | ASSETS_READ  | Get state IDs |
-| GET    | `/{id}`        | ASSETS_READ  | Get state     |
-| PUT    | `/{id}`        | ASSETS_WRITE | Update state  |
-| POST   | `/delete`      | ASSETS_WRITE | Bulk delete   |
+| Method | Path              | Scope        | Description                          |
+| ------ | ----------------- | ------------ | ------------------------------------ |
+| POST   | `/`               | ASSETS_WRITE | Upload state                         |
+| GET    | `/`               | ASSETS_READ  | List states                          |
+| GET    | `/identifiers`    | ASSETS_READ  | Get state IDs                        |
+| GET    | `/{id}`           | ASSETS_READ  | Get state                            |
+| PUT    | `/{id}`           | ASSETS_WRITE | Update state                         |
+| PUT    | `/{id}/file-name` | ASSETS_WRITE | Rename state file and its screenshot |
+| POST   | `/delete`         | ASSETS_WRITE | Bulk delete                          |
+
+### 6.9b RetroArch Cloud Sync (`/api/sync/retroarch`)
+
+A minimal WebDAV surface for RetroArch's Cloud Sync driver, which diffs a JSON
+manifest of `{path, hash}` entries instead of listing collections. Point
+RetroArch's WebDAV URL at `https://<host>/api/sync/retroarch/` (trailing slash
+required) and authenticate with a RomM username and password over HTTP Basic.
+
+| Method               | Path                                 | Scope        | Description                                       |
+| -------------------- | ------------------------------------ | ------------ | ------------------------------------------------- |
+| OPTIONS              | `/{path}`                            | ASSETS_READ  | Advertise DAV support                             |
+| PROPFIND/LOCK/UNLOCK | `/{path}`                            | ASSETS_READ  | Read-only browsing (`roms/` also needs ROMS_READ) |
+| GET                  | `/manifest.server`                   | ASSETS_READ  | Manifest of the caller's saves, states and blobs  |
+| GET                  | `/{root}/[core/]{file}`              | ASSETS_READ  | Download one save/state                           |
+| PUT                  | `/{root}/[core/]{file}`              | ASSETS_WRITE | Upload one save/state                             |
+| DELETE/MOVE          | `/{root}/[core/]{file}`              | ASSETS_WRITE | Delete one save/state                             |
+| GET                  | `/{config,thumbnails,system}/{path}` | ASSETS_READ  | Download one opaque blob file                     |
+| PUT                  | `/{config,thumbnails,system}/{path}` | ASSETS_WRITE | Upload one opaque blob file                       |
+| DELETE/MOVE          | `/{config,thumbnails,system}/{path}` | ASSETS_WRITE | Delete one opaque blob file                       |
+| MKCOL                | `/{path}`                            | ASSETS_WRITE | Accepted no-op (layout is derived from the ROM)   |
+
+- **Matching:** `{root}` is `saves` or `states`. A file matches a ROM by file
+  name alone (`Super Mario World.srm` matches `fs_name_no_ext` `Super Mario
+World`), so a name shared across platforms resolves to the lowest visible ROM id.
+- **Cores:** the `core` segment is RetroArch's directory name (e.g. `Snes9x`),
+  mapped to and from the asset's `emulator` through
+  `sync.retroarch.emulator_names`, so web player saves stay visible. Unknown
+  cores round-trip unchanged.
+- **Manifest:** slotted saves are left out, since no core loads them. Assets
+  whose file is gone are flagged `missing_from_fs`. Hashes are MD5s of the
+  bytes on disk, Redis-cached by path, size and mtime.
+- **PSP:** PPSSPP's `PSP/SAVEDATA/<folder>/` files are stored as one zipped
+  `Save` per folder. A folder whose title matches no ROM is buffered under
+  `SYNC_RETROARCH_PSP_PENDING_PATH`, or mapped through `SYNC_RETROARCH_PSP_SERIAL_MAP`.
+- **Blobs:** `config/`, `thumbnails/` and `system/` belong to no ROM, so they
+  are stored per user under `SYNC_RETROARCH_BASE_PATH` (`FSRetroArchSyncHandler`).
+- **Auth:** the router gates itself so it can answer a 401 Basic challenge,
+  and sends body-less errors, which RetroArch's client needs. The kiosk guest
+  may browse `roms/` but is challenged everywhere else. Uploads are capped at
+  `MAX_ASSET_UPLOAD_SIZE_BYTES`.
+- **Device:** each manifest fetch registers or touches one RetroArch `Device`
+  per user (`client="retroarch"`, `SyncMode.API`), since RetroArch sends no
+  install identity.
 
 ### 6.10 Screenshots (`/api/screenshots`)
 
@@ -961,16 +1025,18 @@ Facet endpoints (`/artists`, `/albums`, `/genres`, `/years`) return `{value, cou
 
 ### 6.12 Collections (`/api/collections`)
 
-| Method | Path                  | Scope             | Description           |
-| ------ | --------------------- | ----------------- | --------------------- |
-| POST   | `/`                   | COLLECTIONS_WRITE | Create collection     |
-| GET    | `/`                   | COLLECTIONS_READ  | List collections      |
-| GET    | `/identifiers`        | COLLECTIONS_READ  | Get collection IDs    |
-| GET    | `/{id}`               | COLLECTIONS_READ  | Get collection        |
-| PUT    | `/{id}`               | COLLECTIONS_WRITE | Update collection     |
-| DELETE | `/{id}`               | COLLECTIONS_WRITE | Delete collection     |
-| POST   | `/{id}/roms`          | COLLECTIONS_WRITE | Add ROM to collection |
-| DELETE | `/{id}/roms/{rom_id}` | COLLECTIONS_WRITE | Remove ROM            |
+| Method | Path                     | Scope             | Description                       |
+| ------ | ------------------------ | ----------------- | --------------------------------- |
+| POST   | `/`                      | COLLECTIONS_WRITE | Create collection                 |
+| GET    | `/`                      | COLLECTIONS_READ  | List collections                  |
+| GET    | `/identifiers`           | COLLECTIONS_READ  | Get collection IDs                |
+| GET    | `/{id}`                  | COLLECTIONS_READ  | Get collection                    |
+| PUT    | `/{id}`                  | COLLECTIONS_WRITE | Update collection                 |
+| PUT    | `/{id}/visibility`       | COLLECTIONS_WRITE | Share or unshare collection       |
+| PUT    | `/smart/{id}/visibility` | COLLECTIONS_WRITE | Share or unshare smart collection |
+| DELETE | `/{id}`                  | COLLECTIONS_WRITE | Delete collection                 |
+| POST   | `/{id}/roms`             | COLLECTIONS_WRITE | Add ROM to collection             |
+| DELETE | `/{id}/roms/{rom_id}`    | COLLECTIONS_WRITE | Remove ROM                        |
 
 ### 6.13 Feeds (`/api/feeds`)
 
@@ -1061,7 +1127,17 @@ A webhook's `format` is `json` (RomM's payload below), `discord` (an embed that 
 
 With a secret, the JSON format adds `X-RomM-Signature: sha256=<hex HMAC-SHA256 of the body>`. Email needs `SMTP_HOST` and `SMTP_FROM` (see `env.template`); the heartbeat's `NOTIFICATIONS.EMAIL_ENABLED` says whether it's set up. Channel configs are sealed with a key derived from `ROMM_AUTH_SECRET_KEY`, so rotating it means entering their URLs again.
 
-### 6.17 Other Endpoints
+### 6.17 Audit Events (`/api/audit-events`)
+
+| Method | Path | Scope   | Description                                                     |
+| ------ | ---- | ------- | --------------------------------------------------------------- |
+| GET    | `/`  | ME_READ | Events newest first: everyone's for an admin, else the caller's |
+
+Filters: `actor_id`, `action`, `category`, `target_type`/`target_id`, `since`/`until`, `search` (names and IP). Pages carry `max_id`; pass it back so later pages skip events recorded meanwhile. An admin reads everyone's only with `users.read` in the token.
+
+Events are written by `handler/audit_handler.record()` after an action succeeds, and a failure to write never fails the action. A ROM content fetch is a `rom.download`, or a `rom.player_load` when the in-browser player marks it `purpose=play`; a fetch whose Range starts past byte 0, or that the same caller made in the last 10 minutes, isn't recorded. A failed login keeps the attempted name only when an account has it. The client address comes from `X-Forwarded-For` only when the connection is from a proxy in `FORWARDED_ALLOW_IPS`.
+
+### 6.18 Other Endpoints
 
 | Router        | Path                                   | Description                            |
 | ------------- | -------------------------------------- | -------------------------------------- |
@@ -1294,7 +1370,7 @@ Tracks per-user playtime events ingested from clients (web player, console mode,
 
 ### 8.7 Device Sync Sessions
 
-Coordinates save/state synchronization between devices using three sync modes (`API`, `FILE_TRANSFER`, `PUSH_PULL`). `SyncSession` tracks the lifecycle of a push/pull operation (including optional SSH-based file transfer; see `SYNC_SSH_*` env vars). Endpoints live in `endpoints/sync.py`; state is stored in the `sync_sessions` table.
+Coordinates save/state synchronization between devices using three sync modes (`API`, `FILE_TRANSFER`, `PUSH_PULL`). `SyncSession` tracks the lifecycle of a push/pull operation (including optional SSH-based file transfer; see `SYNC_SSH_*` env vars). Endpoints live in `endpoints/sync/__init__.py`; state is stored in the `sync_sessions` table.
 
 ### 8.8 Socket Handler (`handler/socket_handler.py`)
 
@@ -1490,6 +1566,7 @@ Toggled via environment variables:
 | `sync_retroachievements_progress` | `ENABLE_SCHEDULED_RETROACHIEVEMENTS_PROGRESS_SYNC` | `0 4 * * *`        | Sync RA user progress  |
 | `cleanup_orphaned_resources`      | `ENABLE_SCHEDULED_CLEANUP_ORPHANED_RESOURCES`      | `0 5 * * *`        | Remove unused artwork  |
 | `cleanup_netplay`                 | Always enabled                                     | Periodic           | Clean stale rooms      |
+| `cleanup_audit_log`               | `AUDIT_LOG_RETENTION_DAYS` above 0 (default 90)    | `30 4 * * *`       | Prune old audit events |
 
 ### Manual Tasks
 
@@ -1623,13 +1700,14 @@ Falls back to `FakeRedis` in test mode.
 
 #### Core
 
-| Variable         | Default          | Description          |
-| ---------------- | ---------------- | -------------------- |
-| `ROMM_BASE_PATH` | `/romm`          | Base data directory  |
-| `ROMM_BASE_URL`  | `http://0.0.0.0` | Application base URL |
-| `ROMM_PORT`      | `8080`           | Server port          |
-| `DEV_MODE`       | `false`          | Development mode     |
-| `LOGLEVEL`       | `INFO`           | Log level            |
+| Variable              | Default          | Description                                                |
+| --------------------- | ---------------- | ---------------------------------------------------------- |
+| `ROMM_BASE_PATH`      | `/romm`          | Base data directory                                        |
+| `ROMM_BASE_URL`       | `http://0.0.0.0` | Application base URL                                       |
+| `ROMM_PORT`           | `8080`           | Server port                                                |
+| `DEV_MODE`            | `false`          | Development mode                                           |
+| `LOGLEVEL`            | `INFO`           | Log level                                                  |
+| `FORWARDED_ALLOW_IPS` | private ranges   | Proxies trusted to report the client address (`*` for any) |
 
 #### Database
 
@@ -1730,14 +1808,15 @@ Falls back to `FakeRedis` in test mode.
 
 #### Device Sync
 
-| Variable                     | Default | Description                     |
-| ---------------------------- | ------- | ------------------------------- |
-| `ENABLE_SYNC_FOLDER_WATCHER` | `false` | Watch sync folder for new saves |
-| `SYNC_FOLDER_SCAN_DELAY`     |         | Debounce for sync folder scans  |
-| `ENABLE_SYNC_PUSH_PULL`      | `false` | Enable scheduled push/pull sync |
-| `SYNC_PUSH_PULL_CRON`        |         | Cron schedule for push/pull     |
-| `SYNC_SSH_KEYS_PATH`         |         | SSH keys path                   |
-| `SYNC_SSH_KNOWN_HOSTS_PATH`  |         | SSH known hosts path            |
+| Variable                        | Default | Description                             |
+| ------------------------------- | ------- | --------------------------------------- |
+| `ENABLE_SYNC_FOLDER_WATCHER`    | `false` | Watch sync folder for new saves         |
+| `SYNC_FOLDER_SCAN_DELAY`        |         | Debounce for sync folder scans          |
+| `ENABLE_SYNC_PUSH_PULL`         | `false` | Enable scheduled push/pull sync         |
+| `SYNC_PUSH_PULL_CRON`           |         | Cron schedule for push/pull             |
+| `SYNC_SSH_KEYS_PATH`            |         | SSH keys path                           |
+| `SYNC_SSH_KNOWN_HOSTS_PATH`     |         | SSH known hosts path                    |
+| `SYNC_RETROARCH_PSP_SERIAL_MAP` | `{}`    | JSON map of PSP serial to ROM file name |
 
 ### YAML Configuration (`config.yml`)
 

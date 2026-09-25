@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 from typing import Final, overload
@@ -310,6 +311,12 @@ SCHEDULED_BUILD_RECOMMENDATIONS_CRON: Final[str] = _get_env(
     "30 5 * * *",  # At 5:30 AM every day, after the nightly scan and metadata tasks
 )
 
+# AUDIT LOG
+# Days an audit event is kept; 0 keeps every event.
+AUDIT_LOG_RETENTION_DAYS: Final[int] = safe_int(
+    _get_env("AUDIT_LOG_RETENTION_DAYS"), 90
+)
+
 # SYNC
 SYNC_BASE_PATH: Final[str] = f"{ROMM_BASE_PATH}/sync"
 ENABLE_SYNC_FOLDER_WATCHER: Final[bool] = safe_str_to_bool(
@@ -328,6 +335,15 @@ SYNC_SSH_KEYS_PATH: Final[str] = _get_env(
 )
 SYNC_SSH_KNOWN_HOSTS_PATH: Final[str] = _get_env(
     "SYNC_SSH_KNOWN_HOSTS_PATH", f"{SYNC_BASE_PATH}/known_hosts"
+)
+# RetroArch Cloud Sync's config/, thumbnails/ and system/ files, which no ROM owns.
+SYNC_RETROARCH_BASE_PATH: Final[str] = f"{ROMM_BASE_PATH}/retroarch_sync"
+# PSP save folder files buffered until the folder resolves to a rom.
+SYNC_RETROARCH_PSP_PENDING_PATH: Final[str] = f"{ROMM_BASE_PATH}/cache/retroarch_sync"
+# JSON map of PSP serial to extensionless rom file name, for saves whose title
+# matches no rom, e.g. {"ULUS10336": "Crisis Core - Final Fantasy VII (USA)"}.
+SYNC_RETROARCH_PSP_SERIAL_MAP: Final[dict[str, str]] = json.loads(
+    _get_env("SYNC_RETROARCH_PSP_SERIAL_MAP", "{}")
 )
 
 # EMULATION
