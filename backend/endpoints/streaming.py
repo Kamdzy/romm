@@ -59,6 +59,7 @@ from handler.streaming import (
     access,
     background,
     commands,
+    imports,
     languages,
     launch,
     lifecycle,
@@ -90,9 +91,11 @@ from handler.streaming.session_store import (
     claim_drain_marker,
     claim_gate,
     clear_termination,
+    get_abandoned_session,
     get_live_session,
     get_session,
     get_termination,
+    hold_session_claim,
     iter_live_sessions,
     iter_session_keys,
     mutate_session,
@@ -109,7 +112,7 @@ from handler.streaming.session_store import (
     stamp_launched,
 )
 from logger.logger import log
-from models.assets import MemoryCard, MemoryCardVersion, Save
+from models.assets import MemoryCard, MemoryCardVersion, Save, State
 from models.rom import Rom
 from models.user import Role
 from utils.m3u import playlist_files
@@ -290,12 +293,22 @@ async def get_config(request: Request) -> StreamingConfigSchema:
     """Return streaming configuration to the frontend"""
     # One row per platform: a pool is a backend concern, the frontend picks a
     # platform and the claim decides which container serves it.
+    # The record carries the platform's label and capabilities, so a
+    # platform hidden from this caller must not be listed here either.
+    visible = [
+        c
+        for c in first_claim_targets()
+        if access.platform_is_visible(request, c.platform)
+    ]
+    # Concurrently, so one unreachable broker costs one timeout, not one each.
+    specs = await asyncio.gather(
+        *(
+            asyncio.to_thread(webstation.import_spec, c, c.emulator, c.platform)
+            for c in visible
+        )
+    )
     safe_containers: list[StreamingContainerSchema] = []
-    for c in first_claim_targets():
-        # The record carries the platform's label and capabilities, so a
-        # platform hidden from this caller must not be listed here either.
-        if not access.platform_is_visible(request, c.platform):
-            continue
+    for c, spec in zip(visible, specs, strict=True):
         safe_containers.append(
             StreamingContainerSchema(
                 platform=c.platform,
@@ -316,6 +329,8 @@ async def get_config(request: Request) -> StreamingConfigSchema:
                 # Whether the in-game Save and Load buttons reach a broker that
                 # honours them, which an exit-state emulator's does not.
                 supports_live_states=c.supports_live_states,
+                # So the picker only offers a foreign pick the claim will take.
+                import_kinds=spec.pickable_kinds() if spec is not None else [],
             )
         )
 
@@ -414,12 +429,8 @@ async def _reserve_container(
     # backend doing it is what refreshes it.
     deadline = time.monotonic() + lifecycle.ABANDONED_TEARDOWN_WAIT
     for candidate in candidates:
-        existing = await get_session(candidate.key)
-        if (
-            existing is None
-            or existing.get("draining")
-            or not session_is_stale(existing)
-        ):
+        existing = await get_abandoned_session(candidate.key)
+        if existing is None:
             continue
         log.warning(
             "taking over stale session, platform=%s user_id=%s",
@@ -642,12 +653,18 @@ async def _hydrate_saves(
     card: MemoryCard | None,
     blank_card_id: int | None,
     save: Save | None = None,
-) -> str | None:
+    save_foreign: bool = False,
+    import_state: State | None = None,
+) -> imports.ImportHydration:
     """Put the player's save data on the container before the game reads it.
 
     Games read saves at boot, so unlike states this cannot be deferred to a
-    background task. Returns the container path of an uploaded archive, for the
-    protocols that restore one as part of the launch.
+    background task.
+
+    Returns:
+        The container path of an uploaded archive (for the protocols that
+        restore one as part of the launch), and whether `import_state`
+        specifically made it onto the container.
     """
     if card is not None:
         # Whole-card sync: hydrate (or wipe to blank) is REQUIRED. If it fails
@@ -667,15 +684,37 @@ async def _hydrate_saves(
             )
 
     if container.is_webstation:
+        if save_foreign or import_state is not None:
+            # A synced memory card is not special-cased: the broker refuses it
+            # with memcard_synced_separately.
+            try:
+                result = await imports.hydrate_import_archive(
+                    request.user.id,
+                    rom,
+                    container,
+                    save=save,
+                    save_is_foreign=save_foreign,
+                    state=import_state,
+                )
+            except Exception:
+                log.exception("import archive hydration failed, continuing launch")
+                result = imports.ImportHydration()
+            if result.path is not None:
+                return result
+            if save_foreign:
+                # A foreign save has no native side to fall back to.
+                return imports.ImportHydration()
+            # Only the foreign state failed, so any native save still hydrates.
         # Restore runs inside activate on this protocol, so hydration only gets
         # the bytes onto the container and names the path activate restores.
         # Still runs under whole-card sync: the archive carries the state the
         # last session ended on, which the card does not.
         # Best-effort: a failed upload just means the container keeps its own.
         try:
-            return await saves.hydrate_saves_to_webstation(
+            path = await saves.hydrate_saves_to_webstation(
                 request.user.id, rom.id, container, save
             )
+            return imports.ImportHydration(path)
         except Exception:
             log.exception("save hydration failed, continuing launch")
     elif card is None:
@@ -685,7 +724,7 @@ async def _hydrate_saves(
             await saves.hydrate_saves_to_broker(request.user.id, rom.id, container)
         except Exception:
             log.exception("save hydration failed, continuing launch")
-    return None
+    return imports.ImportHydration()
 
 
 @protected_route(
@@ -746,17 +785,20 @@ async def claim_session(
     # leave a container wedged behind a failed launch.
     resume_state = None
     resume_slot: int | None = None
+    resume_foreign = False
     if req.state_id is not None:
-        resume_state, resume_slot = states.resolve_resume_state(
-            request.user.id, rom, reference, req.state_id
+        # Off the event loop, since a foreign pick asks the broker synchronously.
+        resume_state, resume_slot, resume_foreign = await asyncio.to_thread(
+            states.resolve_resume_state, request.user.id, rom, reference, req.state_id
         )
 
     # Same for the save pick: a save the player cannot restore here has to
     # fail before the container is reserved, not during the launch.
     picked_save = None
+    save_foreign = False
     if req.save_id is not None:
-        picked_save = saves.resolve_save_archive(
-            request.user.id, rom, reference, req.save_id
+        picked_save, save_foreign = await asyncio.to_thread(
+            saves.resolve_save_archive, request.user.id, rom, reference, req.save_id
         )
 
     # Resolve the memory card to mount before claiming too, so a bad card id
@@ -812,6 +854,57 @@ async def claim_session(
     container = await _win_container(request, candidates, session, platform)
     session_key = container.key
 
+    # On an archive-resume container (DuckStation, RPCS3) the save archive
+    # carries its own exit state, and only the newest archive carries the newest
+    # capture, so any other state and save pairing needs the state imported.
+    state_off_archive = False
+    if (
+        resume_state is not None
+        and not resume_foreign
+        and container.resumes_from_archive
+    ):
+        newest_states = await asyncio.to_thread(
+            states.user_states_for_emulator, request.user.id, rom.id, container.emulator
+        )
+        state_off_archive = not newest_states or newest_states[0].id != resume_state.id
+        if not state_off_archive and picked_save is not None:
+            newest_save = None
+            if not save_foreign:
+                newest_save = await asyncio.to_thread(
+                    saves.newest_restorable,
+                    request.user.id,
+                    rom.id,
+                    container.emulator,
+                )
+            state_off_archive = newest_save is None or newest_save.id != picked_save.id
+
+    # The pre-win checks asked the pool's reference; the won container's own
+    # import-spec is what decides, and one answer covers both picks.
+    spec = None
+    if resume_foreign or state_off_archive or save_foreign:
+        spec = await asyncio.to_thread(
+            webstation.import_spec, container, container.emulator, container.platform
+        )
+    if resume_foreign:
+        import_slot = spec.resume_slot() if spec is not None else None
+        if import_slot is None:
+            await lifecycle.abort_claim(session_key, session)
+            raise HTTPException(
+                status_code=400, detail="This container cannot resume the picked state"
+            )
+        resume_slot = import_slot
+    if save_foreign and (spec is None or not spec.accepts("save")):
+        await lifecycle.abort_claim(session_key, session)
+        raise HTTPException(
+            status_code=400, detail="This container cannot restore the picked save"
+        )
+    resume_via_import = (
+        (resume_foreign or state_off_archive)
+        and spec is not None
+        and spec.accepts("state")
+        and spec.state_channel == "archive"
+    )
+
     # The emulator containers mount the RomM library at the same path the
     # backend uses (LIBRARY_BASE_PATH, /romm/library by default), so the
     # backend-side path is valid inside the broker container too. If a
@@ -821,42 +914,56 @@ async def claim_session(
     library_base = container.library_path
     rom_path = f"{library_base}/{rom.full_path}"
 
-    probe = await _probe_container_card(container, session, req.card_import)
+    # Nothing beats for the player until the stream is up, and on a slow
+    # container these steps can outlast the window after which a claim is stale.
+    claim_hold = asyncio.create_task(hold_session_claim(session_key, session))
+    try:
+        probe = await _probe_container_card(container, session, req.card_import)
 
-    # The player is back in a session, so any note about their previous one
-    # being force-released has served its purpose. Cleared across the whole
-    # pool, not just the container just won: the notice is keyed by container,
-    # and one left on a sibling would be reported as the reason this session
-    # ended when it finally does.
-    for candidate in candidates:
-        await clear_termination(candidate.key, request.user.id)
+        # The player is back in a session, so any note about their previous one
+        # being force-released has served its purpose. Cleared across the whole
+        # pool, not just the container just won: the notice is keyed by container,
+        # and one left on a sibling would be reported as the reason this session
+        # ended when it finally does.
+        for candidate in candidates:
+            await clear_termination(candidate.key, request.user.id)
 
-    memory_card, created_blank_card_id = await _settle_memory_card(
-        request, container, session, memory_card, rom, probe
-    )
+        memory_card, created_blank_card_id = await _settle_memory_card(
+            request, container, session, memory_card, rom, probe
+        )
 
-    # Push the resume state before launch so its file is in place when the
-    # broker's deferred slot load fires. Best-effort: a failed push falls
-    # back to a fresh launch, reported through `resume` in the response.
-    # The webstation broker only takes a state while a session is up, and its
-    # session starts at activate, so that push has to happen after launch.
-    resume_pushed = False
-    resume_after_launch = container.is_webstation and resume_state is not None
-    if resume_state is not None and not resume_after_launch:
-        resume_pushed = await states.push_resume_state(container, resume_state)
+        # Push the resume state before launch so its file is in place when the
+        # broker's deferred slot load fires. Best-effort: a failed push falls
+        # back to a fresh launch, reported through `resume` in the response.
+        # The webstation broker only takes a state while a session is up, and its
+        # session starts at activate, so that push has to happen after launch.
+        resume_pushed = False
+        resume_after_launch = container.is_webstation and resume_state is not None
+        if resume_state is not None and not resume_after_launch:
+            resume_pushed = await states.push_resume_state(container, resume_state)
 
-    # The last exit's detached save pull may still be filing the archive to hydrate.
-    await saves.wait_for_save_pull(request.user.id, rom.id)
+        # The last exit's detached save pull may still be filing the archive to hydrate.
+        await saves.wait_for_save_pull(request.user.id, rom.id)
 
-    archive_path = await _hydrate_saves(
-        request,
-        container,
-        session,
-        rom,
-        memory_card,
-        created_blank_card_id,
-        picked_save,
-    )
+        archive_path, state_imported = await _hydrate_saves(
+            request,
+            container,
+            session,
+            rom,
+            memory_card,
+            created_blank_card_id,
+            picked_save,
+            save_foreign=save_foreign,
+            import_state=resume_state if resume_via_import else None,
+        )
+    finally:
+        claim_hold.cancel()
+    resume_import: launch.ResumeImport = "none"
+    if resume_via_import:
+        resume_import = "imported" if state_imported else "lost"
+    elif state_off_archive:
+        # The archive would resume a state the player did not pick.
+        resume_import = "lost"
 
     # Detached because an activate blocks through pkg and archive extraction,
     # minutes on a large title, which no player can cancel out of.
@@ -877,6 +984,7 @@ async def claim_session(
         resume_slot=resume_slot,
         resume_pushed=resume_pushed,
         resume_after_launch=resume_after_launch,
+        resume_import=resume_import,
         memory_card_synced=memory_card is not None,
         multiplayer=multiplayer,
         blank_card_id=created_blank_card_id,
