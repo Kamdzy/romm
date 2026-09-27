@@ -6,6 +6,7 @@ import socket
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from unittest.mock import MagicMock
 
 import alembic.config
 import pytest
@@ -14,10 +15,12 @@ from joserfc import jwt
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker
 
+from adapters.services import response_validation
 from config import ROMM_DB_DRIVER
 from config.config_manager import ConfigManager
 from handler.auth import auth_handler
-from handler.auth.base_handler import ALGORITHM, oct_key
+from handler.auth.base_handler import oct_key
+from handler.auth.constants import ALGORITHM
 from handler.database import (
     db_firmware_handler,
     db_memory_card_handler,
@@ -40,6 +43,7 @@ from models.device_save_sync import DeviceSaveSync
 from models.firmware import Firmware
 from models.notification import Notification
 from models.notification_channel import NotificationChannel
+from models.permission import SystemGroupKey
 from models.platform import Platform
 from models.play_session import PlaySession
 from models.rom import Rom, RomFile
@@ -124,6 +128,21 @@ def _ensure_database_exists() -> None:
             if not exists:
                 conn.execute(text(f'CREATE DATABASE "{db_name}"'))
         admin_engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def raise_on_response_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(response_validation, "RAISE_ON_MISMATCH", True)
+
+
+@pytest.fixture
+def lenient(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Production mode: mismatches log to the returned mock instead of raising."""
+    log = MagicMock()
+    monkeypatch.setattr(response_validation, "RAISE_ON_MISMATCH", False)
+    monkeypatch.setattr(response_validation, "_reported", set())
+    monkeypatch.setattr(response_validation, "log", log)
+    return log
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -484,7 +503,7 @@ def admin_user():
 @pytest.fixture
 def editor_user():
     # role collapses to `user`; editor-level access now comes from the group.
-    group = db_permission_handler.get_group_by_name("Editor (legacy)")
+    group = db_permission_handler.get_system_group(SystemGroupKey.EDITOR)
     user = User(
         username="test_editor",
         hashed_password=_password_hash("test_editor_password"),
@@ -496,7 +515,7 @@ def editor_user():
 
 @pytest.fixture
 def viewer_user():
-    group = db_permission_handler.get_group_by_name("Viewer (legacy)")
+    group = db_permission_handler.get_system_group(SystemGroupKey.VIEWER)
     user = User(
         username="test_viewer",
         hashed_password=_password_hash("test_viewer_password"),

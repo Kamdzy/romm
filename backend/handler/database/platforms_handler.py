@@ -1,6 +1,7 @@
 import functools
 from collections.abc import Callable, Collection, Sequence
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import Select, delete, func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
@@ -29,8 +30,8 @@ class DBPlatformsHandler(DBBaseHandler):
     def add_platform(
         self,
         platform: Platform,
-        query: Select[tuple[Platform]] = None,  # type: ignore
-        session: Session = None,  # type: ignore
+        query: Select[tuple[Platform]] = None,  # type: ignore[assignment]
+        session: Session = None,  # type: ignore[assignment]
     ) -> Platform:
         platform = session.merge(platform)
         session.flush()
@@ -41,8 +42,8 @@ class DBPlatformsHandler(DBBaseHandler):
     def update_platform(
         self,
         id: int,
-        data: dict,
-        session: Session = None,  # type: ignore
+        data: dict[str, Any],
+        session: Session = None,  # type: ignore[assignment]
     ) -> Platform:
         session.execute(
             update(Platform)
@@ -57,8 +58,8 @@ class DBPlatformsHandler(DBBaseHandler):
     def get_platform(
         self,
         id: int,
-        query: Select[tuple[Platform]] = None,  # type: ignore
-        session: Session = None,  # type: ignore
+        query: Select[tuple[Platform]] = None,  # type: ignore[assignment]
+        session: Session = None,  # type: ignore[assignment]
     ) -> Platform | None:
         return session.scalar(query.filter_by(id=id).limit(1))
 
@@ -68,8 +69,8 @@ class DBPlatformsHandler(DBBaseHandler):
         self,
         updated_after: datetime | None = None,
         hidden_platform_ids: Collection[int] | None = None,
-        query: Select[tuple[Platform]] = None,  # type: ignore
-        session: Session = None,  # type: ignore
+        query: Select[tuple[Platform]] = None,  # type: ignore[assignment]
+        session: Session = None,  # type: ignore[assignment]
     ) -> Sequence[Platform]:
         if updated_after:
             query = query.filter(Platform.updated_at > updated_after)
@@ -85,7 +86,7 @@ class DBPlatformsHandler(DBBaseHandler):
     def get_platform_ids(
         self,
         hidden_platform_ids: Collection[int] | None = None,
-        session: Session = None,  # type: ignore
+        session: Session = None,  # type: ignore[assignment]
     ) -> list[int]:
         """Ids only, deliberately off `with_firmware`: its eager load fires anyway."""
         query = select(Platform).order_by(Platform.name.asc())
@@ -100,8 +101,8 @@ class DBPlatformsHandler(DBBaseHandler):
     def get_platform_by_fs_slug(
         self,
         fs_slug: str,
-        query: Select[tuple[Platform]] = None,  # type: ignore
-        session: Session = None,  # type: ignore
+        query: Select[tuple[Platform]] = None,  # type: ignore[assignment]
+        session: Session = None,  # type: ignore[assignment]
     ) -> Platform | None:
         platform = session.scalar(query.filter_by(fs_slug=fs_slug).limit(1))
         if platform:
@@ -118,8 +119,8 @@ class DBPlatformsHandler(DBBaseHandler):
     def get_platform_by_slug(
         self,
         slug: str,
-        query: Select[tuple[Platform]] = None,  # type: ignore
-        session: Session = None,  # type: ignore
+        query: Select[tuple[Platform]] = None,  # type: ignore[assignment]
+        session: Session = None,  # type: ignore[assignment]
     ) -> Platform | None:
         return session.scalar(query.filter_by(slug=slug).limit(1))
 
@@ -127,7 +128,7 @@ class DBPlatformsHandler(DBBaseHandler):
     def delete_platform(
         self,
         id: int,
-        session: Session = None,  # type: ignore
+        session: Session = None,  # type: ignore[assignment]
     ) -> None:
         # Remove all roms from that platforms first
         session.execute(
@@ -146,7 +147,7 @@ class DBPlatformsHandler(DBBaseHandler):
     def mark_missing_platforms(
         self,
         fs_platforms_to_keep: list[str],
-        session: Session = None,  # type: ignore
+        session: Session = None,  # type: ignore[assignment]
     ) -> Sequence[Platform]:
         missing_platforms = (
             session.scalars(

@@ -2,7 +2,7 @@ import html
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Final, NotRequired, TypedDict
+from typing import Final, NotRequired, TypedDict, cast
 
 import pydash
 from fastapi import HTTPException, status
@@ -673,7 +673,8 @@ def extract_metadata_from_ss_rom(rom: Rom, game: SSGame) -> SSMetadata:
             "franchises": _get_franchises(game),
             "game_modes": _get_game_modes(game),
             "player_count": _get_player_count(game),
-            **extract_media_from_ss_game(rom, game),
+            # The media dict never carries the dump_* keys extra_checks asks about.
+            **extract_media_from_ss_game(rom, game),  # type: ignore[typeddict-item]
         }
     )
 
@@ -739,9 +740,7 @@ def extract_tags_from_ss_dump(dump: SSGameRom) -> list[str]:
     """Tags of one dump, from the flags it raises."""
     # ScreenScraper sends these flags as "1", not 1.
     return [
-        tag
-        for key, tag in _SS_DUMP_FLAG_TAGS
-        if str(dump.get(key, "")).strip() == "1"  # type: ignore[literal-required]
+        tag for key, tag in _SS_DUMP_FLAG_TAGS if str(dump.get(key, "")).strip() == "1"
     ]
 
 
@@ -850,7 +849,7 @@ def build_ss_game(rom: Rom, game: SSGame) -> SSRom:
         "ss_metadata": ss_metadata,
     }
 
-    return SSRom({k: v for k, v in game_rom.items() if v})  # type: ignore[misc]
+    return cast(SSRom, {k: v for k, v in game_rom.items() if v})
 
 
 class SSHandler(MetadataHandler):
@@ -878,7 +877,7 @@ class SSHandler(MetadataHandler):
             log.error("Error checking ScreenScraper API: %s", e)
             return False
 
-        return bool(response.get("response", {}))
+        return bool(response and response.get("response"))
 
     @staticmethod
     def extract_ss_id_from_filename(fs_name: str) -> int | None:
