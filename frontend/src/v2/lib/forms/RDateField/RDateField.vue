@@ -23,15 +23,8 @@ import {
   shift,
   useFloating,
 } from "@floating-ui/vue";
-import {
-  computed,
-  nextTick,
-  onBeforeUnmount,
-  onMounted,
-  ref,
-  useId,
-  watch,
-} from "vue";
+import { computed, nextTick, ref, useId, watch } from "vue";
+import { usePopoverDismiss } from "@/v2/composables/usePopoverDismiss";
 import { useChromeLabels } from "@/v2/lib/a11y/chromeLabels";
 import RBtn from "../../primitives/RBtn/RBtn.vue";
 import RIcon from "../../primitives/RIcon/RIcon.vue";
@@ -363,18 +356,6 @@ function onPanelKeydown(evt: KeyboardEvent) {
       evt.preventDefault();
       selectDay(new Date(focusedDay.value));
       break;
-    case "Escape":
-      evt.preventDefault();
-      evt.stopPropagation();
-      close();
-      // Send focus back to the field so tab order doesn't get stranded
-      // on a teleported panel that just unmounted.
-      nextTick(() => {
-        (
-          referenceEl.value?.querySelector("input") as HTMLElement | null
-        )?.focus();
-      });
-      break;
     default:
       break;
   }
@@ -420,9 +401,8 @@ function focusDayCell() {
 
 // ── Field-level keyboard wiring ────────────────────────────────
 // On the closed field: Space / Enter / ArrowDown opens the popup. Tab
-// behaves natively (moves to next focusable). When open, Escape closes
-// (handled inside the panel: the field doesn't see keydown when focus
-// has moved into the calendar).
+// behaves natively (moves to next focusable). When open, the escape stack
+// owns Escape.
 function onFieldKeydown(evt: KeyboardEvent) {
   if (props.disabled) return;
   if (isOpen.value) return;
@@ -432,26 +412,24 @@ function onFieldKeydown(evt: KeyboardEvent) {
   }
 }
 
-// ── Click-outside ──────────────────────────────────────────────
-function onDocPointerDown(evt: PointerEvent) {
-  if (!isOpen.value) return;
-  const target = evt.target as Node | null;
-  if (!target) return;
-  if (referenceEl.value?.contains(target as HTMLElement)) return;
-  if (panelRef.value?.contains(target)) return;
+function dismiss() {
   close();
+  // Send focus back to the field so tab order doesn't get stranded
+  // on a teleported panel that just unmounted.
+  nextTick(() => {
+    (referenceEl.value?.querySelector("input") as HTMLElement | null)?.focus();
+  });
 }
 
-onMounted(() => {
-  document.addEventListener("pointerdown", onDocPointerDown, true);
-});
-onBeforeUnmount(() => {
-  document.removeEventListener("pointerdown", onDocPointerDown, true);
+usePopoverDismiss(isOpen, close, {
+  reference: () => referenceEl.value,
+  panel: () => panelRef.value,
+  onEscape: dismiss,
 });
 </script>
 
 <template>
-  <!-- Keydown sits here so Escape and the arrows work wherever focus is
+  <!-- Keydown sits here so the opening keys work wherever focus is
        inside the field; the combobox role goes on the input via `popup`. -->
   <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -->
   <div ref="referenceEl" class="r-date-field" @keydown="onFieldKeydown">

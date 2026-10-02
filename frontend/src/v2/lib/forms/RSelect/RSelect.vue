@@ -37,6 +37,7 @@ import {
   watch,
 } from "vue";
 import { useInputModality } from "@/v2/composables/useInputModality";
+import { usePopoverDismiss } from "@/v2/composables/usePopoverDismiss";
 import { useChromeLabels } from "@/v2/lib/a11y/chromeLabels";
 import { shouldAutofocusSearch } from "@/v2/utils/autofocus";
 import RDivider from "../../primitives/RDivider/RDivider.vue";
@@ -728,21 +729,14 @@ function toggleMenu() {
   else openMenu();
 }
 
-// Click-outside: closes the panel when the user clicks anywhere
-// outside both the activator and the panel.
-function onDocPointerDown(evt: PointerEvent) {
-  if (!isOpen.value) return;
-  const target = evt.target as Node | null;
-  if (!target) return;
-  if (activatorRef.value?.contains(target)) return;
-  if (panelRef.value?.contains(target)) return;
-  closeMenu();
-}
-onMounted(() => {
-  document.addEventListener("pointerdown", onDocPointerDown, true);
-});
-onBeforeUnmount(() => {
-  document.removeEventListener("pointerdown", onDocPointerDown, true);
+usePopoverDismiss(isOpen, closeMenu, {
+  reference: () => activatorRef.value,
+  panel: () => panelRef.value,
+  onEscape: () => {
+    const focusInPanel = !!panelRef.value?.contains(document.activeElement);
+    closeMenu();
+    if (focusInPanel) activatorRef.value?.focus();
+  },
 });
 
 // Close when search is changed externally? No, keep open while
@@ -802,12 +796,6 @@ function onActivatorKey(evt: KeyboardEvent) {
         if (item) selectItem(item);
       }
       break;
-    case "Escape":
-      if (isOpen.value) {
-        evt.preventDefault();
-        closeMenu();
-      }
-      break;
     case "Tab":
       if (isOpen.value) closeMenu();
       break;
@@ -830,11 +818,6 @@ function onSearchKey(evt: KeyboardEvent) {
       if (item) selectItem(item);
       break;
     }
-    case "Escape":
-      evt.preventDefault();
-      closeMenu();
-      activatorRef.value?.focus();
-      break;
   }
 }
 

@@ -18,6 +18,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import DefaultClause, FetchedValue, Table, UniqueConstraint
 from sqlalchemy.sql.schema import NULL_UNSPECIFIED
+from tests.factories import make_rom
 
 import models
 from handler.database import db_collection_handler, db_platform_handler
@@ -31,7 +32,9 @@ from utils.database import (
     AUTOGENERATE_EXEMPT_INDEX_NAMES,
     HLTB_MAIN_STORY_COLUMN,
     POSTGRESQL_FK_INDEXES,
-    SEARCH_ALIASES_COLUMN,
+    ROMS_SEARCH_FULLTEXT_INDEX,
+    ROMS_SEARCH_TITLES_TRGM_INDEX,
+    SEARCH_TITLES_COLUMN,
     SORTABLE_NULLABLE_ROM_COLUMNS,
     exact_collation,
     full_path_digest_sql,
@@ -181,7 +184,7 @@ def test_the_migrated_full_path_digest_matches_the_models(
     A mismatch would make every pre-existing rom look new to the unique index.
     """
     with sync_engine.connect() as connection:
-        digest = connection.execute(
+        digest: str = connection.execute(
             sa.text(
                 f"SELECT {full_path_digest_sql(connection)} FROM "
                 "(SELECT :fs_path AS fs_path, :fs_name AS fs_name) AS one_rom"
@@ -358,7 +361,7 @@ def test_the_derivable_columns_revision_reverses_and_replays(admin_user: User):
             }
             assert not columns[("rom_file_doc_meta", "rom_id")]["nullable"]
             assert columns[("smart_collections", "rom_count")]["default"] is None
-            rom_count = connection.execute(
+            rom_count: int = connection.execute(
                 sa.text("SELECT rom_count FROM smart_collections WHERE id = :id"),
                 {"id": smart.id},
             ).scalar_one()
@@ -371,21 +374,44 @@ def test_the_derivable_columns_revision_reverses_and_replays(admin_user: User):
         assert {table: _schema_of(connection, table) for table in tables} == before
 
 
-def test_the_search_aliases_revision_reverses_and_replays():
-    """0146 swaps the search index, and each step of either direction is guarded."""
+def test_the_search_titles_revision_reverses_replays_and_fills(platform: Platform):
+    """0146 swaps the search index and fills existing rows, resuming a partial run."""
     migration = _load_migration("0146_roms_search_aliases.py")
+    first = make_rom(
+        platform, "Final Fantasy VII", igdb_metadata={"alternative_names": ["FF7"]}
+    )
+    second = make_rom(platform, "Chrono Trigger")
+
+    def titles(connection: sa.Connection) -> dict[int, str | None]:
+        rows = connection.execute(
+            sa.text("SELECT id, search_titles FROM roms WHERE id IN (:a, :b)"),
+            {"a": first.id, "b": second.id},
+        )
+        return dict(rows.all())
 
     with sync_engine.begin() as connection:
         before = _schema_of(connection, "roms")
+        expected = titles(connection)
         with Operations.context(MigrationContext.configure(connection)):
             migration.downgrade()
-            assert not has_column(connection, "roms", SEARCH_ALIASES_COLUMN)
-
+            assert not has_column(connection, "roms", SEARCH_TITLES_COLUMN)
+            indexes = _schema_of(connection, "roms")[1]
+            assert ROMS_SEARCH_FULLTEXT_INDEX not in indexes
+            assert ROMS_SEARCH_TITLES_TRGM_INDEX not in indexes
             migration.downgrade()
+
             migration.upgrade()
+            assert titles(connection) == expected
+
+            connection.execute(
+                sa.text("UPDATE roms SET search_titles = NULL WHERE id = :id"),
+                {"id": second.id},
+            )
             migration.upgrade()
+            assert titles(connection) == expected
 
         assert _schema_of(connection, "roms") == before
+    assert expected[first.id] == "\x1ffinal fantasy vii\x1fff7\x1f"
 
 
 def _slot_collations(connection: sa.Connection) -> dict[str, str | None]:
@@ -522,7 +548,7 @@ def test_the_full_path_hash_migration_resumes_an_interrupted_run(rom: Rom):
             migration.upgrade()
 
         columns, indexes = _schema_of(connection, "roms")
-        digest = connection.execute(
+        digest: str = connection.execute(
             sa.text(
                 f"SELECT {migration.COLUMN_NAME} FROM roms WHERE id = :rom_id"
             ),  # nosec B608
@@ -633,12 +659,12 @@ def test_the_roms_columns_helper_rebuilds_a_narrowed_sort_index():
         )
 
 
-def test_the_roms_columns_helper_rebuilds_the_search_index_with_the_alias_column():
-    """A rebuild of the alias column must not leave the gallery search unindexed."""
+def test_the_roms_columns_helper_rebuilds_the_search_index_with_the_titles_column():
+    """A rebuild of the titles column must not leave the gallery search unindexed."""
     with sync_engine.begin() as connection:
         before = _schema_of(connection, "roms")
         connection.execute(
-            sa.text(f"ALTER TABLE roms DROP COLUMN {SEARCH_ALIASES_COLUMN}")
+            sa.text(f"ALTER TABLE roms DROP COLUMN {SEARCH_TITLES_COLUMN}")
         )
 
         ensure_roms_columns(connection)
@@ -789,7 +815,7 @@ def test_the_roms_columns_helper_fills_the_full_path_digest_where_it_can(rom: Ro
             assert columns[FULL_PATH_HASH_COLUMN] is not is_mariadb(connection)
             assert not has_server_default(connection, FULL_PATH_HASH_COLUMN)
             if is_mariadb(connection):
-                digest = connection.execute(
+                digest: str = connection.execute(
                     sa.text(
                         f"SELECT {FULL_PATH_HASH_COLUMN} FROM roms WHERE id = :rom_id"  # nosec B608
                     ),

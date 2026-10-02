@@ -387,6 +387,18 @@ const routes = [
             },
           },
           {
+            path: "conversion-settings",
+            name: ROUTES.CONVERSION_SETTINGS,
+            meta: {
+              title: "settings.conversion-settings",
+              bare: true,
+            },
+            components: {
+              default: () => import("@/views/Home.vue"),
+              v2: v2For(ROUTES.CONVERSION_SETTINGS),
+            },
+          },
+          {
             path: "metadata-sources",
             name: ROUTES.METADATA_SOURCES,
             meta: {
@@ -508,7 +520,10 @@ const routes = [
   {
     path: "/pair",
     name: ROUTES.PAIR,
-    component: () => import("@/v2/views/PairDispatcher.vue"),
+    components: {
+      default: () => import("@/views/Pair.vue"),
+      v2: v2For(ROUTES.PAIR),
+    },
   },
   // Console mode (separate UI namespace under /console): v1 only; v2 merges
   // console behavior into the main UI via the universal input system.
@@ -582,6 +597,7 @@ const routePermissions: RoutePermissions[] = [
   { path: ROUTES.UPLOAD, requiredScopes: ["roms.write"] },
   { path: ROUTES.LIBRARY_MANAGEMENT, requiredScopes: ["platforms.write"] },
   { path: ROUTES.SCAN_SETTINGS, requiredScopes: ["platforms.write"] },
+  { path: ROUTES.CONVERSION_SETTINGS, requiredScopes: ["platforms.write"] },
   { path: ROUTES.ADMINISTRATION, requiredScopes: ["users.write"] },
   { path: ROUTES.LOGS, requiredScopes: ["logs.read"] },
 ];

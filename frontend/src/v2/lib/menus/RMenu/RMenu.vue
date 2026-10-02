@@ -36,23 +36,16 @@ import {
   computed,
   nextTick,
   onBeforeUnmount,
-  onMounted,
   provide,
   ref,
   useAttrs,
-  useSlots,
   watch,
 } from "vue";
 import { useBreakpoint } from "@/v2/composables/useBreakpoint";
 import { useInputModality } from "@/v2/composables/useInputModality";
+import { usePopoverDismiss } from "@/v2/composables/usePopoverDismiss";
 import { opensInNewContext } from "@/v2/utils/mouseGestures";
 import RTextField from "../../forms/RTextField/RTextField.vue";
-import {
-  type EscapableEntry,
-  isInsideEscapableAbove,
-  popEscapable,
-  pushEscapable,
-} from "../../overlays/RDialog/escapeStack.js";
 import RIcon from "../../primitives/RIcon/RIcon.vue";
 import { RMenuCloseKey } from "./context";
 
@@ -138,7 +131,6 @@ const emit = defineEmits<{
   (e: "close"): void;
 }>();
 
-const slots = useSlots();
 const attrs = useAttrs();
 
 // ── Open state ──────────────────────────────────────────────────
@@ -174,11 +166,13 @@ function toggle() {
 provide(RMenuCloseKey, close);
 
 // ── Refs ────────────────────────────────────────────────────────
-// The activator slot renders inside a `display: contents` span; we
-// read its first child as the floating-ui reference (the actual
-// activator element the user passed in).
+// The activator slot renders inside a `display: contents` span, so its
+// first child is the floating-ui reference. Re-read on each open, since
+// a `v-if` in the slot can swap that element and slots are not reactive.
 const activatorWrapper = ref<HTMLElement | null>(null);
-const reference = ref<Element | null>(null);
+const reference = computed(() =>
+  isOpen.value ? (activatorWrapper.value?.firstElementChild ?? null) : null,
+);
 const panelRef = ref<HTMLElement | null>(null);
 
 // ── Placement translation ───────────────────────────────────────
@@ -302,29 +296,7 @@ const activatorProps = computed(() => {
   return out;
 });
 
-// ── Click-outside ──────────────────────────────────────────────
-function onDocPointerDown(evt: PointerEvent) {
-  if (!isOpen.value) return;
-  const target = evt.target as Node | null;
-  if (!target) return;
-  if (
-    reference.value &&
-    (reference.value as HTMLElement).contains(target as HTMLElement)
-  )
-    return;
-  if (panelRef.value?.contains(target)) return;
-  // A nested menu's panel is teleported outside this one.
-  if (isInsideEscapableAbove(escEntry, target)) return;
-  close();
-}
-
-// ── Escape / B-button dismissal ────────────────────────────────
-// Register on the shared overlay-escape stack so a single global
-// listener handles Esc across menus, dialogs, drawers, and so
-// `useGamepad`'s B-back action can close the topmost overlay without
-// reaching into the DOM. LIFO ordering means nested menus close one
-// at a time (the inner-most first), matching the previous per-instance
-// `document.keydown` behaviour.
+// ── Dismissal ──────────────────────────────────────────────────
 // `disabled` only blocks opening, so a menu disabled while open closes too.
 watch(
   () => props.disabled,
@@ -333,43 +305,12 @@ watch(
   },
 );
 
-const escEntry: EscapableEntry = {
-  close: () => close(),
-  persistent: false,
+// The escape stack is LIFO, so nested menus close one at a time,
+// innermost first.
+usePopoverDismiss(isOpen, close, {
+  reference: () => reference.value,
   panel: () => panelRef.value,
-};
-
-watch(
-  () => isOpen.value,
-  (open) => {
-    if (open) pushEscapable(escEntry);
-    else popEscapable(escEntry);
-  },
-  // `immediate: true` so a menu that mounts already open registers too, the
-  // same reason RDialog does it: otherwise the watch never sees the initial
-  // `true` and Esc, gamepad-back and tooltip suppression all miss the panel.
-  { immediate: true },
-);
-
-onMounted(() => {
-  reference.value = activatorWrapper.value?.firstElementChild ?? null;
-  document.addEventListener("pointerdown", onDocPointerDown, true);
 });
-onBeforeUnmount(() => {
-  document.removeEventListener("pointerdown", onDocPointerDown, true);
-  // Safety: if we unmount while open (route change while the menu is
-  // visible) drop our entry so the stack doesn't dereference a dead
-  // close function.
-  popEscapable(escEntry);
-});
-
-// Re-read the reference if the slot content changes (e.g., v-if flips).
-watch(
-  () => slots.activator,
-  () => {
-    reference.value = activatorWrapper.value?.firstElementChild ?? null;
-  },
-);
 
 // ── Close-on-content-click ─────────────────────────────────────
 // Fires after the inner element's @click: Vue's natural bubbling

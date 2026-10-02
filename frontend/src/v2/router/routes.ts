@@ -49,8 +49,7 @@ export const v2RouteComponents: Partial<Record<RouteName, V2Route>> = {
   // Wave 6: Library Tools (Scan / Upload) + Pair
   [ROUTES.SCAN]: () => import("@/v2/views/Scan.vue"),
   [ROUTES.UPLOAD]: () => import("@/v2/views/Upload.vue"),
-  // Pair is wired via a top-level PairDispatcher (see plugins/router.ts); no
-  // named-view entry is needed: the dispatcher picks v1 or v2 itself.
+  [ROUTES.PAIR]: () => import("@/v2/views/PairShell.vue"),
   // Wave 7: Settings suite
   [ROUTES.USER_PROFILE]: () => import("@/v2/views/Settings/UserProfile.vue"),
   [ROUTES.USER_INTERFACE]: () =>
@@ -58,6 +57,8 @@ export const v2RouteComponents: Partial<Record<RouteName, V2Route>> = {
   [ROUTES.LIBRARY_MANAGEMENT]: () =>
     import("@/v2/views/Settings/LibraryManagement.vue"),
   [ROUTES.SCAN_SETTINGS]: () => import("@/v2/views/Settings/ScanSettings.vue"),
+  [ROUTES.CONVERSION_SETTINGS]: () =>
+    import("@/v2/views/Settings/ConversionSettings.vue"),
   [ROUTES.METADATA_SOURCES]: () =>
     import("@/v2/views/Settings/MetadataSources.vue"),
   [ROUTES.CLIENT_API_TOKENS]: () =>

@@ -116,11 +116,13 @@ from models.collection import Collection, SmartCollection, VirtualCollection
 from models.permission import PermAction, PermEntity
 from models.rom import (
     HAS_FILE_ON_DISK_FILTERS,
+    METADATA_SOURCE_COLUMNS,
     PINNED_MEDIA_KEY_MAX_LENGTH,
     PINNED_MEDIA_KEY_PATTERN,
     PINNED_MEDIA_MAX_ITEMS,
     TITLE_ID_MAX_LENGTH,
     Rom,
+    RomFile,
     RomIdentity,
     RomUserStatus,
     SaveTargetLayout,
@@ -129,8 +131,16 @@ from models.rom import (
 )
 from utils import switch
 from utils.background_tasks import fire_and_forget
+from utils.conversion_cache import (
+    RETRY_AFTER_SECONDS,
+    FormatOutcome,
+    get_redirect_path,
+    may_start_conversion,
+    parse_formats,
+    resolve_format_download,
+)
 from utils.database import safe_int, safe_str_to_bool
-from utils.filesystem import sanitize_filename
+from utils.filesystem import check_filename_length, sanitize_filename
 from utils.hashing import crc32_to_hex
 from utils.m3u import generate_m3u_content, playlist_files
 from utils.nginx import (
@@ -303,6 +313,11 @@ class RomUpdateForm(BaseModel):
 # The provider ids the edit form sets; changing one rematches the rom.
 MATCH_ID_FIELDS: Final = tuple(
     f for f in RomUpdateForm.model_fields if f.endswith("_id")
+)
+# Every id a match can set, including ones the form doesn't expose (gamelist).
+UNMATCH_ID_FIELDS: Final = (
+    "sgdb_id",
+    *(column.key for column in METADATA_SOURCE_COLUMNS.values()),
 )
 # What an edit reports as changed, each read off one or more columns.
 _EDIT_AUDIT_FIELDS: Final[dict[str, tuple[str, ...]]] = {
@@ -564,9 +579,10 @@ def get_roms(
         str,
         Query(
             description=(
-                "Field to order results by. Leave empty to order by search "
-                "relevance when a search term is given on MySQL/MariaDB; other "
-                "databases fall back to name."
+                "Field to order results by. Leave empty to order a search of "
+                "two or more words, or of at least three characters, by "
+                "relevance: exact name or alias matches first, then names "
+                "starting with the term, then phrase matches."
             ),
         ),
     ] = "",
@@ -660,9 +676,11 @@ def get_roms(
         request.user.id, order_by, order_dir, filters.group_by_meta_id, is_unscoped
     )
 
-    # Get the char index for the roms
+    # Get the char index for the roms. Relevance order has no letter runs.
     char_index_dict = {}
-    if with_char_index:
+    if with_char_index and not db_rom_handler.search_relevance_leads(
+        order_by, filters.search_term
+    ):
         char_index = db_rom_handler.with_char_index(
             query=query,
             order_by_attr=sort_key.column,
@@ -788,7 +806,10 @@ def get_roms(
             )
 
         if page_ids:
-            page_rows = session.scalars(query.where(Rom.id.in_(page_ids))).all()
+            # The rows are reordered by `page_ids` below, so the sort is dropped.
+            page_rows = session.scalars(
+                query.where(Rom.id.in_(page_ids)).order_by(None)
+            ).all()
             rows_by_id = {rom.id: rom for rom in page_rows}
             page_items = [rows_by_id[i] for i in page_ids if i in rows_by_id]
         else:
@@ -1300,11 +1321,88 @@ def get_rom(
     return DetailedRomSchema.from_orm_with_request(rom, request)
 
 
+CONTENT_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
+    status.HTTP_202_ACCEPTED: {
+        "description": "The requested format is converting; retry after Retry-After."
+    },
+    status.HTTP_404_NOT_FOUND: {},
+    status.HTTP_406_NOT_ACCEPTABLE: {
+        "description": "No requested format can be served for this download."
+    },
+}
+
+FormatQuery = Annotated[
+    str | None,
+    Query(
+        alias="format",
+        description="Comma-separated formats the client can read, such as "
+        "`zso,iso`. The stored file is served when its format is listed, else "
+        "a converted copy: 202 with Retry-After while it converts, 406 when no "
+        "listed format can be produced. Single-file downloads only.",
+    ),
+]
+
+
+async def _negotiate_format(
+    request: Request,
+    rom: Rom,
+    files: list[RomFile],
+    raw_formats: str | None,
+    *,
+    start: bool,
+) -> Response | None:
+    """The response a `?format=` download gets, or None to serve the stored file."""
+    formats = parse_formats(raw_formats or "")
+    if not formats:
+        return None
+    if len(files) != 1:
+        raise HTTPException(
+            status_code=status.HTTP_406_NOT_ACCEPTABLE,
+            detail="A format can only be requested for a single file",
+        )
+
+    file = files[0]
+    resolution = await resolve_format_download(
+        rom,
+        file,
+        formats,
+        allowed=may_start_conversion(request),
+        start=start,
+        touch=start,
+    )
+    if resolution.outcome == FormatOutcome.ORIGINAL:
+        return None
+    if resolution.outcome == FormatOutcome.PENDING:
+        return Response(
+            status_code=status.HTTP_202_ACCEPTED,
+            headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
+        )
+    if resolution.outcome == FormatOutcome.UNAVAILABLE or resolution.path is None:
+        raise HTTPException(
+            status_code=status.HTTP_406_NOT_ACCEPTABLE,
+            detail=f"{file.file_name} can't be served as {', '.join(formats)}",
+        )
+
+    converted = resolution.path
+    if DEV_MODE:
+        return FileResponse(
+            path=converted,
+            filename=converted.name,
+            headers={
+                "Content-Disposition": content_disposition(converted.name),
+                "Content-Type": "application/octet-stream",
+            },
+        )
+    return FileRedirectResponse(
+        download_path=get_redirect_path(converted), filename=converted.name
+    )
+
+
 @protected_route(
     router.head,
     "/{id}/content/{file_name}",
     [] if DISABLE_DOWNLOAD_ENDPOINT_AUTH else [Scope.ROMS_READ],
-    responses={status.HTTP_404_NOT_FOUND: {}},
+    responses=CONTENT_RESPONSES,
 )
 async def head_rom_content(
     request: Request,
@@ -1316,6 +1414,7 @@ async def head_rom_content(
             description="Comma-separated list of file ids to download for multi-part roms."
         ),
     ] = None,
+    formats: FormatQuery = None,
 ) -> Response:
     """Retrieve head information for a rom file download."""
 
@@ -1337,6 +1436,10 @@ async def head_rom_content(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No files found for ROM {id}",
         )
+
+    # Report what a GET would serve, but never start a conversion.
+    if negotiated := await _negotiate_format(request, rom, files, formats, start=False):
+        return negotiated
 
     # Serve the file directly in development mode for emulatorjs
     if DEV_MODE:
@@ -1398,7 +1501,7 @@ async def head_rom_content(
     router.get,
     "/{id}/content/{file_name}",
     [] if DISABLE_DOWNLOAD_ENDPOINT_AUTH else [Scope.ROMS_READ],
-    responses={status.HTTP_404_NOT_FOUND: {}},
+    responses=CONTENT_RESPONSES,
 )
 async def get_rom_content(
     request: Request,
@@ -1417,6 +1520,7 @@ async def get_rom_content(
             "recorded as a player load rather than a download."
         ),
     ] = "download",
+    formats: FormatQuery = None,
 ) -> Response:
     """Download a rom.
 
@@ -1481,6 +1585,13 @@ async def get_rom_content(
             ),
         )
         return response
+
+    if negotiated := await _negotiate_format(request, rom, files, formats, start=True):
+        return (
+            served(negotiated)
+            if negotiated.status_code == status.HTTP_200_OK
+            else negotiated
+        )
 
     m3u_files = playlist_files(files)
 
@@ -1779,26 +1890,12 @@ async def update_rom(
     assert_rom_visible(request, rom)
 
     if unmatch_metadata:
-        unmatched = {f: getattr(rom, f) for f in MATCH_ID_FIELDS if getattr(rom, f)}
+        unmatched = {f: getattr(rom, f) for f in UNMATCH_ID_FIELDS if getattr(rom, f)}
         unmatch_target = AuditTarget.of_rom(rom)
         db_rom_handler.update_rom(
             id,
             {
-                "igdb_id": None,
-                "sgdb_id": None,
-                "moby_id": None,
-                "ss_id": None,
-                "ra_id": None,
-                "launchbox_id": None,
-                "hasheous_id": None,
-                "tgdb_id": None,
-                "flashpoint_id": None,
-                "hltb_id": None,
-                "demozoo_id": None,
-                "pouet_id": None,
-                "csdb_id": None,
-                "steam_id": None,
-                "libretro_id": None,
+                **dict.fromkeys(UNMATCH_ID_FIELDS),
                 "name": rom.fs_name,
                 "name_sort_key": compute_name_sort_key(rom.fs_name),
                 "summary": "",
@@ -1839,6 +1936,17 @@ async def update_rom(
             {"providers": unmatched},
         )
         return DetailedRomSchema.from_orm_with_request(rom, request)
+
+    # Rejected before any provider fetch or download, which a refused name would waste.
+    try:
+        new_fs_name = sanitize_filename(str(form_data.fs_name or rom.fs_name))
+        if new_fs_name != rom.fs_name:
+            check_filename_length(new_fs_name)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file name: {exc}",
+        ) from exc
 
     provided_fields = form_data.model_fields_set
     cleaned_data: dict[str, Any] = {
@@ -2111,8 +2219,6 @@ async def update_rom(
                 submitted or name_value
             )
 
-    new_fs_name = str(form_data.fs_name or rom.fs_name)
-    new_fs_name = sanitize_filename(new_fs_name)
     cleaned_data.update({"fs_name": new_fs_name})
 
     # Re-parse tags from the filename so region/language/revision/version/tags
@@ -2256,16 +2362,7 @@ async def update_rom(
         f"Updating {hl(cleaned_data.get('name', ''), color=BLUE)} [{hl(cleaned_data.get('fs_name', ''))}] with data {cleaned_data}"
     )
 
-    try:
-        db_rom_handler.update_rom(id, cleaned_data)
-    except IntegrityError as exc:
-        log.error(f"Failed to update ROM {id}: {exc}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update ROM {id}: {exc}",
-        ) from exc
-
-    # Rename the file/folder if the name has changed
+    # The file moves first so a failed move leaves the row untouched.
     should_update_fs = new_fs_name != rom.fs_name
     if should_update_fs:
         try:
@@ -2277,10 +2374,29 @@ async def update_rom(
         except RomAlreadyExistsException as exc:
             log.error(exc)
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=exc
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Can't rename: {new_fs_name} already exists",
+            ) from exc
+        except (OSError, ValueError) as exc:
+            log.error(f"Failed to rename ROM {id} on disk: {exc}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to rename ROM {id} on disk",
             ) from exc
 
-    # Update the rom files with the new fs_name
+    try:
+        db_rom_handler.update_rom(id, cleaned_data)
+    except IntegrityError as exc:
+        log.error(f"Failed to update ROM {id}: {exc}")
+        if should_update_fs:
+            await fs_rom_handler.rename_fs_rom(
+                old_name=new_fs_name, new_name=rom.fs_name, fs_path=rom.fs_path
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update ROM {id}: {exc}",
+        ) from exc
+
     if should_update_fs:
         for file in rom.files:
             db_rom_handler.update_rom_file(

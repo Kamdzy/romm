@@ -27,16 +27,8 @@ import {
   useFloating,
 } from "@floating-ui/vue";
 import type { Placement } from "@floating-ui/vue";
-import {
-  computed,
-  nextTick,
-  onBeforeUnmount,
-  onMounted,
-  ref,
-  useId,
-  useSlots,
-  watch,
-} from "vue";
+import { computed, nextTick, ref, useId, useSlots, watch } from "vue";
+import { usePopoverDismiss } from "@/v2/composables/usePopoverDismiss";
 import { useChromeLabels } from "@/v2/lib/a11y/chromeLabels";
 import RIcon from "@/v2/lib/primitives/RIcon/RIcon.vue";
 import RTag from "@/v2/lib/primitives/RTag/RTag.vue";
@@ -282,22 +274,11 @@ function pickSuggestion(item: string) {
   nextTick(() => inputRef.value?.focus());
 }
 
-// Outside-click closes the panel: mirrors RMenu / RSelect.
-function onDocPointerDown(evt: PointerEvent) {
-  if (!isOpen.value) return;
-  const target = evt.target as Node | null;
-  if (!target) return;
-  if (fieldRef.value?.contains(target as Node)) return;
-  if (panelRef.value?.contains(target as Node)) return;
-  closePanel();
-}
-
-onMounted(() => {
-  document.addEventListener("pointerdown", onDocPointerDown, true);
-});
-onBeforeUnmount(() => {
-  document.removeEventListener("pointerdown", onDocPointerDown, true);
-});
+usePopoverDismiss(
+  computed(() => isOpen.value && hasSuggestions.value),
+  closePanel,
+  { reference: () => fieldRef.value, panel: () => panelRef.value },
+);
 
 // Reset active highlight when the suggestion set changes.
 watch(suggestions, () => {
