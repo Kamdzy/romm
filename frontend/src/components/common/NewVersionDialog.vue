@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useLocalStorage } from "@vueuse/core";
 import semver from "semver";
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import storeHeartbeat from "@/stores/heartbeat";
 
 const heartbeat = storeHeartbeat();
@@ -9,6 +9,12 @@ const { VERSION } = heartbeat.value.SYSTEM;
 const GITHUB_VERSION = ref(VERSION);
 const latestVersionDismissed = ref(VERSION === "development");
 const dismissedVersion = useLocalStorage("ui.dismissedVersion", "");
+
+const hasNewerVersion = computed(() => {
+  const latest = semver.coerce(GITHUB_VERSION.value);
+  const current = semver.coerce(VERSION);
+  return !!latest && !!current && semver.gt(latest, current);
+});
 
 function dismissVersionBanner() {
   dismissedVersion.value = GITHUB_VERSION.value;
@@ -60,10 +66,7 @@ onMounted(async () => {
     <v-slide-y-transition>
       <v-card
         v-if="
-          GITHUB_VERSION &&
-          semver.coerce(GITHUB_VERSION) &&
-          semver.gt(semver.coerce(GITHUB_VERSION), semver.coerce(VERSION)) &&
-          !latestVersionDismissed
+          GITHUB_VERSION && hasNewerVersion && !latestVersionDismissed
         "
         class="pa-1 border-selected mx-auto"
         max-width="fit-content"
