@@ -260,7 +260,7 @@ class FlashpointHandler(MetadataHandler):
             log.error("Error searching Flashpoint API: %s", exc)
             raise
 
-    def _parse_games_data(self, games_data: list) -> list[FlashpointGame]:
+    def _parse_games_data(self, games_data: list[dict[str, Any]]) -> list[FlashpointGame]:
         """
         Parse raw game data from API response into FlashpointGame objects.
         
@@ -354,19 +354,19 @@ class FlashpointHandler(MetadataHandler):
         
         # If we have exactly 1 result and search term had a valid GUID, it's a GUID exact match
         if len(games) == 1 and is_valid_guid:
-            best_game = games[0]
+            guid_game = games[0]
             log.debug(
-                f"Found Flashpoint match for '{search_term}' -> '{best_game['title']}' (GUID exact match)"
+                f"Found Flashpoint match for '{search_term}' -> '{guid_game['title']}' (GUID exact match)"
             )
             return FlashpointRom(
-                flashpoint_id=best_game["id"],
-                name=best_game["title"],
-                summary=best_game["original_description"],
-                url_cover=f"https://infinity.unstable.life/images/Logos/{best_game['id'][:2]}/{best_game['id'][2:4]}/{best_game['id']}?type=jpg",
+                flashpoint_id=guid_game["id"],
+                name=guid_game["title"],
+                summary=guid_game["original_description"],
+                url_cover=f"https://infinity.unstable.life/images/Logos/{guid_game['id'][:2]}/{guid_game['id'][2:4]}/{guid_game['id']}?type=jpg",
                 url_screenshots=[
-                    f"https://infinity.unstable.life/images/Screenshots/{best_game['id'][:2]}/{best_game['id'][2:4]}/{best_game['id']}?type=jpg"
+                    f"https://infinity.unstable.life/images/Screenshots/{guid_game['id'][:2]}/{guid_game['id'][2:4]}/{guid_game['id']}?type=jpg"
                 ],
-                flashpoint_metadata=extract_flashpoint_metadata(best_game),
+                flashpoint_metadata=extract_flashpoint_metadata(guid_game),
             )
 
         # Find the best match using similarity scoring (for name-based searches)
