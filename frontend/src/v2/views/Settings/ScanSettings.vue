@@ -7,7 +7,7 @@
 // they stay as data constants; only descriptive prose goes through i18n.
 import { RAlert, RSelect, RBtn, RSpinner } from "@v2/lib";
 import { storeToRefs } from "pinia";
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { onBeforeRouteLeave } from "vue-router";
 import type { MetadataMediaType, ScanSettingsPayload } from "@/__generated__";
@@ -21,6 +21,7 @@ import SettingsSection from "@/v2/components/Settings/SettingsSection.vue";
 import SettingsSubsection from "@/v2/components/Settings/SettingsSubsection.vue";
 import SettingsToggleRow from "@/v2/components/Settings/SettingsToggleRow.vue";
 import { useConfirm } from "@/v2/composables/useConfirm";
+import { useFetchState } from "@/v2/composables/useFetchState";
 import { useSnackbar } from "@/v2/composables/useSnackbar";
 import { useUnloadGuard } from "@/v2/composables/useUnloadGuard";
 
@@ -32,7 +33,7 @@ const authStore = storeAuth();
 const snackbar = useSnackbar();
 
 // Provider brand names: identical across every locale, so not i18n'd.
-const PROVIDER_LABELS: Record<string, string> = {
+const PROVIDER_LABELS = {
   igdb: "IGDB",
   moby: "MobyGames",
   ss: "ScreenScraper",
@@ -51,7 +52,9 @@ const PROVIDER_LABELS: Record<string, string> = {
   libretro: "Libretro",
   playmatch: "Playmatch",
 };
-const METADATA_SOURCES = [
+const toSources = (keys: (keyof typeof PROVIDER_LABELS)[]) =>
+  keys.map((value) => ({ value, label: PROVIDER_LABELS[value] }));
+const METADATA_SOURCES = toSources([
   "igdb",
   "moby",
   "ss",
@@ -69,8 +72,8 @@ const METADATA_SOURCES = [
   "sgdb",
   "libretro",
   "playmatch",
-].map((value) => ({ value, label: PROVIDER_LABELS[value] }));
-const ARTWORK_SOURCES = [
+]);
+const ARTWORK_SOURCES = toSources([
   "sgdb",
   "igdb",
   "moby",
@@ -88,7 +91,7 @@ const ARTWORK_SOURCES = [
   "pouet",
   "csdb",
   "playmatch",
-].map((value) => ({ value, label: PROVIDER_LABELS[value] }));
+]);
 
 // Common provider region / language codes, offered as one-click
 // suggestions. Users may still type any provider-defined code.
@@ -263,23 +266,18 @@ const canEdit = computed(
     config.value.CONFIG_FILE_WRITABLE,
 );
 
-const loading = ref(true);
-const loadError = ref(false);
 const saving = ref(false);
 
-async function loadConfig() {
-  loading.value = true;
-  loadError.value = false;
-  try {
-    resetForm(await configStore.fetchConfig({ rethrow: true }));
-  } catch {
-    loadError.value = true;
-  } finally {
-    loading.value = false;
-  }
-}
-
-onMounted(loadConfig);
+const {
+  isLoading: loading,
+  error,
+  execute: loadConfig,
+} = useFetchState(
+  () => configStore.fetchConfig({ rethrow: true }),
+  config.value,
+  { onSuccess: resetForm },
+);
+const loadError = computed(() => error.value !== undefined);
 
 function onReset() {
   resetForm(config.value);

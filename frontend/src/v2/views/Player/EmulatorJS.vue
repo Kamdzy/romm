@@ -412,7 +412,8 @@ async function onPlayNative() {
   rememberCore(romId, rom.value.platform_slug, selectedCore.value);
   rememberDisc(romId, selectedDisc.value);
   const refusal = await nativeStore.launch(rom.value, {
-    core: selectedCore.value,
+    // No core leaves the shell to pick one from the platform's candidates.
+    core: selectedCore.value ?? undefined,
     fullscreen: fullscreenOnPlay.value,
     disc: selectedDisc.value,
   });
@@ -598,19 +599,6 @@ onMounted(async () => {
 
   emitter?.on("saveSelected", selectSave);
   emitter?.on("stateSelected", selectState);
-  window.addEventListener("gamepad:buttondown", onGamepadButton);
-
-  if ("keyboard" in navigator) {
-    useEventListener(document, "fullscreenchange", () => {
-      if (document.fullscreenElement) {
-        navigator.keyboard
-          .lock(["Escape", "Tab", "AltLeft", "ControlLeft", "MetaLeft"])
-          .catch(() => {});
-      } else {
-        navigator.keyboard.unlock();
-      }
-    });
-  }
 
   // compatibleStates filters on selectedCore, so resolve the core first.
   selectedCore.value = resolveRememberedCore(
@@ -666,6 +654,19 @@ function onGamepadButton(e: CustomEvent<{ name?: string }>) {
   if (gameRunning.value) return;
   setAssetTab(activeAssetTab.value === "save" ? "state" : "save");
 }
+useEventListener(window, "gamepad:buttondown", onGamepadButton);
+
+if ("keyboard" in navigator) {
+  useEventListener(document, "fullscreenchange", () => {
+    if (document.fullscreenElement) {
+      navigator.keyboard
+        .lock(["Escape", "Tab", "AltLeft", "ControlLeft", "MetaLeft"])
+        .catch(() => {});
+    } else {
+      navigator.keyboard.unlock();
+    }
+  });
+}
 
 onBeforeUnmount(() => {
   // Leaving the player (back nav / route change) ends the session even if
@@ -675,7 +676,6 @@ onBeforeUnmount(() => {
   exitEmulatorOnce();
   emitter?.off("saveSelected", selectSave);
   emitter?.off("stateSelected", selectState);
-  window.removeEventListener("gamepad:buttondown", onGamepadButton);
 });
 
 function openCacheDialog() {

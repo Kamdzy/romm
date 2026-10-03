@@ -1,4 +1,4 @@
-<script setup lang="ts">
+<script setup lang="ts" generic="Item, Model">
 // RSelect: combines an RTextField-style activator (variants,
 // hover/focus halos, labels) with a floating menu panel positioned by
 // `@floating-ui/vue` and rendered as a teleported surface in the v2
@@ -25,12 +25,11 @@ import {
   useFloating,
 } from "@floating-ui/vue";
 import type { Placement } from "@floating-ui/vue";
+import { useElementSize } from "@vueuse/core";
 import {
   computed,
   getCurrentInstance,
   nextTick,
-  onBeforeUnmount,
-  onMounted,
   ref,
   useAttrs,
   useSlots,
@@ -54,37 +53,48 @@ defineOptions({ inheritAttrs: false });
 type Rule = (value: any) => true | string;
 
 interface NormalisedItem {
-  // `raw` + `value` are the consumer's source item / its key, we don't
-  // know their shape but they do. Typing as `any` so `#selection` /
-  // `#item` slot consumers can read fields off them without spamming
-  // `as` casts.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  raw: any;
+  raw: Item;
   title: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  value: any;
+  value: unknown;
   disabled?: boolean;
 }
 
+// `multiple` needs an array model and single-select `clearable` a nullable one.
+// `boolean &` keeps Vue's runtime Boolean casting.
+type IsArrayModel = [NonNullable<Model>] extends [readonly unknown[]]
+  ? true
+  : false;
+type MultipleAllowed = unknown extends Model
+  ? unknown
+  : IsArrayModel extends true
+    ? unknown
+    : false;
+type ClearableAllowed = unknown extends Model
+  ? unknown
+  : null extends Model
+    ? unknown
+    : IsArrayModel extends true
+      ? unknown
+      : false;
+
 interface Props {
-  modelValue?: unknown;
-  items?: unknown[];
+  /** Typed by the bound ref; RSelect trusts it matches the items' keys. */
+  modelValue?: Model;
+  items?: readonly Item[];
   label?: string;
   placeholder?: string;
   variant?: "outlined" | "filled" | "underlined" | "plain";
   density?: "default" | "comfortable" | "compact";
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  itemTitle?: string | ((item: any) => string);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  itemValue?: string | ((item: any) => unknown);
-  multiple?: boolean;
+  itemTitle?: string | ((item: Item) => string);
+  itemValue?: string | ((item: Item) => unknown);
+  multiple?: boolean & MultipleAllowed;
   /** When true, the model holds the raw item objects instead of their
    *  `itemValue` keys. Read paths (selection comparisons, chip
    *  rendering, isSelected) are mode-agnostic: only emits change. */
   returnObject?: boolean;
   chips?: boolean;
   closableChips?: boolean;
-  clearable?: boolean;
+  clearable?: boolean & ClearableAllowed;
   disabled?: boolean;
   readonly?: boolean;
   loading?: boolean;
@@ -138,8 +148,7 @@ interface Props {
   allOptionLabel?: string;
   /** Items it matches get a divider below their row, setting them apart
    *  from the ones that follow. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  dividerAfter?: (item: any) => boolean;
+  dividerAfter?: (item: Item) => boolean;
   /** Tip revealed from an info icon in the trailing label well. */
   info?: string;
 }
@@ -189,7 +198,7 @@ const labels = useChromeLabels();
 const allText = computed(() => props.allOptionLabel ?? labels.all);
 
 const emit = defineEmits<{
-  (e: "update:modelValue", value: unknown): void;
+  (e: "update:modelValue", value: Model): void;
   (e: "update:search", value: string): void;
   /** Fires whenever All-mode toggles. Consumers whose backend does NOT
    *  read an empty model as "all" (e.g. the Scan view, where an empty
@@ -202,6 +211,12 @@ const emit = defineEmits<{
   (e: "open"): void;
   (e: "close"): void;
 }>();
+
+// Values are built from the items at runtime, so the cast trusts the
+// caller's model type to match them.
+function emitModel(value: unknown) {
+  emit("update:modelValue", value as Model);
+}
 
 const slots = useSlots();
 const attrs = useAttrs();
@@ -341,7 +356,7 @@ const hasSelection = computed(() => selectedItems.value.length > 0);
 // `fitChipCount` of them. ResizeObserver re-measures on width changes.
 const valueRef = ref<HTMLElement | null>(null);
 const measureRef = ref<HTMLElement | null>(null);
-const containerWidth = ref(0);
+const { width: containerWidth } = useElementSize(valueRef);
 const fitChipCount = ref<number>(Number.POSITIVE_INFINITY);
 
 const visibleChips = computed<NormalisedItem[]>(() => {
@@ -351,20 +366,6 @@ const visibleChips = computed<NormalisedItem[]>(() => {
 const overflowCount = computed(() =>
   Math.max(0, selectedItems.value.length - visibleChips.value.length),
 );
-
-let resizeObserver: ResizeObserver | null = null;
-onMounted(() => {
-  if (!valueRef.value) return;
-  containerWidth.value = valueRef.value.clientWidth;
-  resizeObserver = new ResizeObserver((entries) => {
-    for (const e of entries) containerWidth.value = e.contentRect.width;
-  });
-  resizeObserver.observe(valueRef.value);
-});
-onBeforeUnmount(() => {
-  resizeObserver?.disconnect();
-  resizeObserver = null;
-});
 
 // Walk through the mirror's chips and stop when the next one (plus
 // the reserved overflow-pill width) would overflow the visible row.
@@ -397,7 +398,7 @@ function recomputeFit() {
   let used = 0;
   let count = 0;
   for (let i = 0; i < chips.length; i++) {
-    const w = chips[i].offsetWidth;
+    const w = chips[i]!.offsetWidth;
     const remaining = chips.length - 1 - i;
     const overflowReserve = remaining > 0 ? overflowWidth + gap : 0;
     const gapNow = count > 0 ? gap : 0;
@@ -444,7 +445,7 @@ function selectItem(item: NormalisedItem) {
       const preserved = Array.isArray(props.modelValue)
         ? (props.modelValue as unknown[]).filter((v) => !ownSet.has(valueOf(v)))
         : [];
-      emit("update:modelValue", [...preserved, emitValueOf(item)]);
+      emitModel([...preserved, emitValueOf(item)]);
       return;
     }
     const cur = Array.isArray(props.modelValue)
@@ -453,9 +454,9 @@ function selectItem(item: NormalisedItem) {
     const idx = cur.findIndex((v) => valueOf(v) === item.value);
     if (idx === -1) cur.push(emitValueOf(item));
     else cur.splice(idx, 1);
-    emit("update:modelValue", cur);
+    emitModel(cur);
   } else {
-    emit("update:modelValue", emitValueOf(item));
+    emitModel(emitValueOf(item));
     closeMenu();
   }
 }
@@ -542,9 +543,9 @@ function toggleAllItems() {
       const preserved = (props.modelValue as unknown[]).filter(
         (v) => !ownSet.has(valueOf(v)),
       );
-      emit("update:modelValue", preserved);
+      emitModel(preserved);
     } else {
-      emit("update:modelValue", []);
+      emitModel([]);
     }
   }
 }
@@ -554,7 +555,7 @@ function removeSelection(value: unknown) {
     const cur = Array.isArray(props.modelValue)
       ? (props.modelValue as unknown[]).filter((v) => valueOf(v) !== value)
       : [];
-    emit("update:modelValue", cur);
+    emitModel(cur);
   } else {
     clear();
   }
@@ -575,12 +576,12 @@ function clear() {
       const preserved = (props.modelValue as unknown[]).filter(
         (v) => !ownSet.has(valueOf(v)),
       );
-      emit("update:modelValue", preserved);
+      emitModel(preserved);
     } else {
-      emit("update:modelValue", []);
+      emitModel([]);
     }
   } else {
-    emit("update:modelValue", null);
+    emitModel(null);
   }
   emit("clear");
 }
@@ -757,7 +758,7 @@ function moveActive(delta: number) {
   for (let n = 0; n < list.length; n++) {
     if (i < 0) i = list.length - 1;
     if (i >= list.length) i = 0;
-    if (!list[i].disabled) break;
+    if (!list[i]!.disabled) break;
     i += delta || 1;
   }
   activeIndex.value = i;

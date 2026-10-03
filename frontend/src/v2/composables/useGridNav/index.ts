@@ -34,6 +34,7 @@
 // For wrapping CSS grids (PlatformsIndex / CollectionsIndex), where
 // there are no per-row DOM containers, use `useWrapGridNav` instead;
 // it detects rows spatially from cell rects.
+import { useEventListener, useMutationObserver } from "@vueuse/core";
 import { onBeforeUnmount, onMounted, watch, type Ref } from "vue";
 import { useRoute } from "vue-router";
 import { useInputModality } from "@/v2/composables/useInputModality";
@@ -202,12 +203,10 @@ export function useGridNav(
     const active = document.activeElement as HTMLElement | null;
     if (!active) return null;
     const rs = rows();
-    for (let r = 0; r < rs.length; r++) {
-      const row = rs[r];
+    for (const [r, row] of rs.entries()) {
       if (!row.contains(active) && active !== row) continue;
-      const cs = cells(row);
-      for (let c = 0; c < cs.length; c++) {
-        if (cs[c].contains(active) || cs[c] === active) {
+      for (const [c, cell] of cells(row).entries()) {
+        if (cell.contains(active) || cell === active) {
           return { rowIdx: r, colIdx: c };
         }
       }
@@ -226,7 +225,7 @@ export function useGridNav(
     const cs = cells(row);
     if (cs.length === 0) return;
     const clamped = Math.min(Math.max(colIdx, 0), cs.length - 1);
-    const cell = cs[clamped];
+    const cell = cs[clamped]!;
     const target = focusableIn(cell);
     navCell = cell;
 
@@ -270,8 +269,8 @@ export function useGridNav(
 
   function focusFirst() {
     const rs = rows();
-    for (let r = 0; r < rs.length; r++) {
-      if (cells(rs[r]).length > 0) {
+    for (const [r, row] of rs.entries()) {
+      if (cells(row).length > 0) {
         preferredCol = 0;
         focusAt(r, 0, { verticalJump: true });
         return;
@@ -288,10 +287,9 @@ export function useGridNav(
     const savedKey = focusStore.restore(route.fullPath);
     if (!savedKey) return false;
     const rs = rows();
-    for (let r = 0; r < rs.length; r++) {
-      const cs = cells(rs[r]);
-      for (let c = 0; c < cs.length; c++) {
-        if (cellKey(cs[c]) === savedKey) {
+    for (const [r, row] of rs.entries()) {
+      for (const [c, cell] of cells(row).entries()) {
+        if (cellKey(cell) === savedKey) {
           preferredCol = c;
           focusAt(r, c, { verticalJump: true });
           return true;
@@ -311,10 +309,10 @@ export function useGridNav(
     const rs = rows();
     const order = edge === "first" ? rs.keys() : [...rs.keys()].reverse();
     for (const r of order) {
-      const cs = cells(rs[r]);
+      const cs = cells(rs[r]!);
       const cols = edge === "first" ? cs.keys() : [...cs.keys()].reverse();
       for (const c of cols) {
-        if (!hasControl(cs[c])) continue;
+        if (!hasControl(cs[c]!)) continue;
         preferredCol = c;
         focusAt(r, c, { verticalJump: true });
         return;
@@ -347,11 +345,12 @@ export function useGridNav(
   // The row about one viewport above or below `from`, clamped to the rows
   // that are mounted.
   function pageRow(rs: HTMLElement[], from: number, dir: 1 | -1): number {
-    const top = rs[from].getBoundingClientRect().top;
-    const target = top + dir * pageHeight(rs[from]);
+    const fromRow = rs[from]!;
+    const top = fromRow.getBoundingClientRect().top;
+    const target = top + dir * pageHeight(fromRow);
     let best = from;
     for (let r = from + dir; r >= 0 && r < rs.length; r += dir) {
-      const rowTop = rs[r].getBoundingClientRect().top;
+      const rowTop = rs[r]!.getBoundingClientRect().top;
       if (dir === 1 ? rowTop > target : rowTop < target) break;
       best = r;
     }
@@ -373,7 +372,7 @@ export function useGridNav(
 
     let { rowIdx, colIdx } = cur;
     const rs = rows();
-    const rowCells = cells(rs[rowIdx]);
+    const rowCells = cells(rs[rowIdx]!);
     if (rowCells[colIdx] !== navCell) preferredCol = colIdx;
     let verticalJump = false;
 
@@ -415,12 +414,8 @@ export function useGridNav(
     focusAt(rowIdx, colIdx, { verticalJump });
   }
 
-  // Watches card rows for late-arriving children (data fetching finishes
-  // after mount, skeletons swap to real cards). When the first cell shows
-  // up (and the user is in pad modality without focus in the grid), we
-  // land focus on it.
-  let observer: MutationObserver | null = null;
-
+  // Runs as late children arrive (fetches finishing, skeletons swapping to
+  // cards), so pad focus lands on the first cell once it shows up.
   function maybeAutofocus() {
     if (modality.value !== "pad") return;
     if (!rootRef.value) return;
@@ -451,26 +446,21 @@ export function useGridNav(
   }
 
   onMounted(() => {
-    document.addEventListener("keydown", onKey);
-    window.addEventListener("focusin", onFocusIn);
-    if (rootRef.value) {
-      observer = new MutationObserver(() => {
+    useEventListener(document, "keydown", onKey);
+    useEventListener(window, "focusin", onFocusIn);
+    useMutationObserver(
+      rootRef,
+      () => {
         scheduleSyncRoving();
         maybeAutofocus();
-      });
-      observer.observe(rootRef.value, { childList: true, subtree: true });
-    }
+      },
+      { childList: true, subtree: true },
+    );
     requestAnimationFrame(maybeAutofocus);
     scheduleSyncRoving();
   });
 
-  onBeforeUnmount(() => {
-    document.removeEventListener("keydown", onKey);
-    window.removeEventListener("focusin", onFocusIn);
-    observer?.disconnect();
-    observer = null;
-    cancelAnimationFrame(syncFrame);
-  });
+  onBeforeUnmount(() => cancelAnimationFrame(syncFrame));
 
   // Reactively autofocus when modality becomes "pad". Useful when the
   // user picks up a gamepad after loading the page with the mouse.

@@ -12,7 +12,6 @@ describe("useDebouncedSearch", () => {
 
   afterEach(() => {
     scope.stop();
-    vi.useRealTimers();
   });
 
   function setup(initial: string | null) {
@@ -63,6 +62,35 @@ describe("useDebouncedSearch", () => {
 
     expect(term.value).toBe("zelda");
     expect(input.value).toBe("zelda");
+  });
+
+  it("drops a pending keystroke when its scope stops", () => {
+    const { term, setSearch } = setup(null);
+
+    setSearch("mario");
+    scope.stop();
+    vi.advanceTimersByTime(300);
+
+    expect(term.value).toBeNull();
+  });
+
+  it("commits straight away on flush, dropping the pending keystroke", () => {
+    const { term, setSearch, flush } = setup(null);
+
+    setSearch(" mario ");
+    expect(flush()).toBe(true);
+    expect(term.value).toBe("mario");
+
+    term.value = "zelda";
+    vi.advanceTimersByTime(300);
+    expect(term.value).toBe("zelda");
+  });
+
+  it("reports an unchanged term on flush", () => {
+    const { setSearch, flush } = setup("mario");
+
+    setSearch("mario ");
+    expect(flush()).toBe(false);
   });
 
   it("keeps what the user typed when the term it settled on echoes back", async () => {

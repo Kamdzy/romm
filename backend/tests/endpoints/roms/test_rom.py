@@ -1084,6 +1084,48 @@ def test_update_rom_refreshes_smart_collection_membership(
     assert refreshed.rom_ids == [rom.id]
 
 
+@pytest.mark.parametrize(
+    "previous, expected",
+    [
+        (["http://x/a.jpg", "http://x/b.jpg"], False),
+        (["http://x/b.jpg", "http://x/a.jpg"], True),
+        (["http://x/a.jpg"], True),
+    ],
+    ids=["unchanged", "reordered", "added"],
+)
+@patch.object(
+    FSResourcesHandler, "get_rom_screenshots", new_callable=AsyncMock, return_value=[]
+)
+@patch.object(
+    IGDBHandler,
+    "get_rom_by_id",
+    return_value=IGDBRom(
+        igdb_id=MOCK_IGDB_ID, url_screenshots=["http://x/a.jpg", "http://x/b.jpg"]
+    ),
+)
+def test_update_rom_redownloads_screenshots_when_their_order_changes(
+    _get_rom_by_id_mock: AsyncMock,
+    get_rom_screenshots_mock: AsyncMock,
+    client: TestClient,
+    access_token: str,
+    rom: Rom,
+    previous: list[str],
+    expected: bool,
+):
+    db_rom_handler.update_rom(rom.id, {"url_screenshots": previous})
+
+    response = client.put(
+        f"/api/roms/{rom.id}",
+        headers={"Authorization": f"Bearer {access_token}"},
+        data={"igdb_id": str(MOCK_IGDB_ID)},
+    )
+    assert response.status_code == status.HTTP_200_OK
+
+    screenshot_call = get_rom_screenshots_mock.await_args
+    assert screenshot_call is not None
+    assert screenshot_call.kwargs["overwrite"] is expected
+
+
 # Minimal valid PNG (1x1 transparent pixel)
 _PNG_BYTES = (
     b"\x89PNG\r\n\x1a\n"
@@ -2790,6 +2832,44 @@ class TestUnmatchMetadata:
         unmatched = db_rom_handler.get_rom(rom.id)
         assert unmatched is not None
         assert not unmatched.is_identified
+
+    @pytest.mark.parametrize(
+        "manual, kept_path",
+        [
+            ({"url_manual": "https://ss.fr/manual?id=1"}, ""),
+            (
+                {
+                    "url_manual": "https://ss.fr/manual?id=1",
+                    "locked_fields": ["url_manual"],
+                },
+                "roms/1/1/manual/1.pdf",
+            ),
+            ({"url_manual": ""}, "roms/1/1/manual/1.pdf"),
+        ],
+        ids=["scraped", "uploaded-over-scraped", "uploaded"],
+    )
+    def test_update_rom_unmatch_metadata_drops_only_a_scraped_manual(
+        self,
+        client: TestClient,
+        access_token: str,
+        rom: Rom,
+        manual: dict[str, Any],
+        kept_path: str,
+    ):
+        db_rom_handler.update_rom(
+            rom.id, {"path_manual": "roms/1/1/manual/1.pdf", **manual}
+        )
+
+        response = client.put(
+            f"/api/roms/{rom.id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"unmatch_metadata": True},
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        body = response.json()
+        assert body["url_manual"] == ""
+        assert body["path_manual"] == kept_path
 
 
 def test_rom_filters_stay_individual_query_parameters(client: TestClient):

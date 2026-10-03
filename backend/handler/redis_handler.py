@@ -2,7 +2,7 @@ import asyncio
 import os
 import sys
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Any, Final, cast
@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from redis import Redis
 from redis.asyncio import Redis as AsyncRedis
+from redis.maint_notifications import MaintNotificationsConfig
 from rq import Queue, Worker
 from rq.exceptions import DeserializationError, InvalidJobOperation, NoSuchJobError
 from rq.job import Job, JobStatus
@@ -32,7 +33,22 @@ SCAN_QUEUE_NAME: Final = "scans"
 # either for minutes.
 STREAMING_QUEUE_NAME: Final = "streaming"
 
-redis_client = Redis.from_url(REDIS_URL)
+# Maintenance notifications are a Redis Enterprise/Cloud feature. Left on
+# "auto", every new connection probes for it and fails on Redis < 8.2 and Valkey.
+REDIS_CLIENT_OPTIONS: Final[dict[str, Any]] = {
+    "maint_notifications_config": MaintNotificationsConfig(enabled=False),
+}
+
+
+class RomMRedis(Redis):
+    """`Redis` with `REDIS_CLIENT_OPTIONS`, for the RQ CLI's `--connection-class`."""
+
+    @classmethod
+    def from_url(cls, url: str, **kwargs: Any) -> Redis:
+        return super().from_url(url, **{**REDIS_CLIENT_OPTIONS, **kwargs})
+
+
+redis_client = Redis.from_url(REDIS_URL, **REDIS_CLIENT_OPTIONS)
 
 high_prio_queue = Queue(name=QueuePrio.HIGH.value, connection=redis_client)
 default_queue = Queue(name=QueuePrio.DEFAULT.value, connection=redis_client)
@@ -69,7 +85,7 @@ def __get_sync_cache() -> Redis:
         return FakeRedis(server=_fake_server)
 
     # A separate client that auto-decodes responses is needed
-    client = Redis.from_url(REDIS_URL, decode_responses=True)
+    client = Redis.from_url(REDIS_URL, decode_responses=True, **REDIS_CLIENT_OPTIONS)
     log.debug(
         f"Sync redis/valkey connection established in {os.path.splitext(os.path.basename(sys.argv[0]))[0]}"
     )
@@ -118,7 +134,9 @@ def __get_async_cache() -> AsyncRedis:
         return cast(AsyncRedis, _PerLoopFakeAsyncRedis(_fake_server))
 
     # A separate client that auto-decodes responses is needed
-    client = AsyncRedis.from_url(REDIS_URL, decode_responses=True)
+    client = AsyncRedis.from_url(
+        REDIS_URL, decode_responses=True, **REDIS_CLIENT_OPTIONS
+    )
     log.debug(
         f"Async redis/valkey connection established in {os.path.splitext(os.path.basename(sys.argv[0]))[0]}"
     )
@@ -136,7 +154,7 @@ def __get_async_binary_cache() -> AsyncRedis:
         # The fake does not decode responses, which is what this client wants.
         return async_cache
 
-    return AsyncRedis.from_url(REDIS_URL)
+    return AsyncRedis.from_url(REDIS_URL, **REDIS_CLIENT_OPTIONS)
 
 
 async_binary_cache = __get_async_binary_cache()
@@ -144,16 +162,26 @@ async_binary_cache = __get_async_binary_cache()
 
 @asynccontextmanager
 async def redis_lock(
-    key: str, *, timeout_seconds: int, poll_seconds: float = 0.1
+    key: str,
+    *,
+    timeout_seconds: int,
+    poll_seconds: float = 0.1,
+    lease_seconds: int | None = None,
 ) -> AsyncIterator[None]:
     """Hold `key` as a mutex across gunicorn workers, via SET NX (no Lua needed).
+
+    Args:
+        lease_seconds: How long the key outlives a holder that never releases it,
+            `timeout_seconds` by default
 
     Raises:
         TimeoutError: The key stayed held for `timeout_seconds`.
     """
     token = uuid4().hex
     for _ in range(int(timeout_seconds / poll_seconds)):
-        if await async_cache.set(key, token, nx=True, ex=timeout_seconds):
+        if await async_cache.set(
+            key, token, nx=True, ex=lease_seconds or timeout_seconds
+        ):
             break
         await asyncio.sleep(poll_seconds)
     else:
@@ -254,11 +282,20 @@ def get_worker_current_job(worker: BaseWorker) -> Job | None:
         return None
 
 
-def has_live_worker(queue: Queue) -> bool:
-    """Whether a job enqueued on ``queue`` would be picked up."""
+def has_live_worker(queue: Queue, workers: Iterable[BaseWorker] | None = None) -> bool:
+    """Whether a job enqueued on ``queue`` would be picked up.
+
+    Args:
+        workers: Every registered worker, when the caller has already listed them
+    """
+    listening = (
+        Worker.all(queue=queue)
+        if workers is None
+        else [worker for worker in workers if queue.name in worker.queue_names()]
+    )
     # A worker that crashed without announcing it stays registered until its
     # key TTL lapses, so this can still say yes for a few minutes after a kill.
     return any(
         worker.death_date is None and worker.get_state() != WorkerStatus.SUSPENDED
-        for worker in Worker.all(queue=queue)
+        for worker in listening
     )

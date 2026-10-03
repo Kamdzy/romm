@@ -55,7 +55,7 @@ const {
   hashMatchers,
   setHashMatcher,
   isHashMatcherOn,
-  buildScanPayload,
+  buildScanSourceOptions,
   persistSelection,
 } = useScanProviders();
 
@@ -133,7 +133,7 @@ onBeforeUnmount(() => {
 });
 
 const singleRom = computed<SimpleRom | null>(() =>
-  roms.value.length === 1 ? roms.value[0] : null,
+  roms.value.length === 1 ? roms.value[0]! : null,
 );
 const singleRomCover = computed<string | null>(() => {
   const r = singleRom.value;
@@ -158,7 +158,7 @@ function onScan() {
     byPlatform.set(r.platform_id, list);
   }
 
-  const payload = buildScanPayload();
+  const payload = buildScanSourceOptions();
   const started = startScan(
     [...byPlatform].map(([platformId, romIds]) => ({
       platforms: [platformId],
