@@ -37,12 +37,12 @@ export interface PendingAsset {
   fsNameNoExt?: string;
   cover?: string | null;
   bytes: ArrayBuffer;
-  screenshotBytes?: ArrayBuffer;
+  screenshotBytes?: ArrayBuffer | undefined;
   /** Saves only: the slot the session was writing to. */
-  slot?: string;
+  slot?: string | undefined;
   emulator?: string;
   /** Saves only: the device the session was playing on. */
-  deviceId?: string;
+  deviceId?: string | undefined;
   capturedAt: number;
 }
 
@@ -257,7 +257,10 @@ async function archiveSave(
 async function uploadSave(
   entry: PendingAsset,
   rom: { id: number; fs_name_no_ext: string },
-): Promise<{ upload?: PromiseSettledResult<unknown>; archived?: true }> {
+): Promise<{
+  upload?: PromiseSettledResult<unknown> | undefined;
+  archived?: true;
+}> {
   const slot = entry.slot ?? AUTOSAVE_SLOT;
   const [uploaded] = await saveApi.uploadSaves({
     rom,
@@ -368,7 +371,7 @@ export interface SyncedAsset {
   kind: PendingAssetKind;
   romId: number;
   name: string;
-  cover?: string | null;
+  cover?: string | null | undefined;
   /** Kept as a separate save, its slot holding newer progress from another device. */
   archived?: true;
 }

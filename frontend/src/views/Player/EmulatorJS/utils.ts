@@ -140,7 +140,7 @@ export async function saveState({
 }: {
   rom: DetailedRom;
   stateFile: ArrayBuffer;
-  screenshotFile?: ArrayBuffer;
+  screenshotFile?: ArrayBuffer | undefined;
 }): Promise<StateUpload> {
   // A zero-length buffer means the core failed to serialize its state (a torn
   // read from a running threaded core). Refuse to upload it so a broken
@@ -179,7 +179,7 @@ export async function saveState({
       ],
     });
 
-    const uploadedState = uploadedStates[0];
+    const uploadedState = uploadedStates[0]!;
     if (uploadedState.status == "fulfilled") {
       await pendingAssetStore.clear(pendingId);
       if (rom) rom.user_states.unshift(uploadedState.value);
@@ -205,9 +205,9 @@ export async function saveSave({
   rom: DetailedRom;
   save: SaveSchema | null;
   saveFile: ArrayBuffer;
-  screenshotFile?: ArrayBuffer;
-  deviceId?: string;
-  slot?: string;
+  screenshotFile?: ArrayBuffer | undefined;
+  deviceId?: string | undefined;
+  slot?: string | undefined;
 }): Promise<SaveSchema | null> {
   if (save) {
     try {
@@ -254,7 +254,7 @@ export async function saveSave({
       ],
     });
 
-    const uploadedSave = uploadedSaves[0];
+    const uploadedSave = uploadedSaves[0]!;
     if (uploadedSave.status == "fulfilled") {
       if (rom) rom.user_saves.unshift(uploadedSave.value);
       return uploadedSave.value;
@@ -278,8 +278,8 @@ export function saveSaveOnUnload({
   rom: DetailedRom;
   save: SaveSchema | null;
   saveFile: ArrayBuffer;
-  deviceId?: string;
-  slot?: string;
+  deviceId?: string | undefined;
+  slot?: string | undefined;
 }): boolean {
   return saveApi.sendSaveOnUnload({
     rom,
@@ -752,7 +752,7 @@ export function installIOSFullscreenShim() {
   const overrides: Array<{
     target: object;
     key: PropertyKey;
-    prev?: PropertyDescriptor;
+    prev?: PropertyDescriptor | undefined;
   }> = [];
   const override = (
     target: object,

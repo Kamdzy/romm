@@ -11,10 +11,9 @@ import {
   RSpinner,
   RTooltip,
 } from "@v2/lib";
-import { MdPreview } from "md-editor-v3";
-import "md-editor-v3/lib/style.css";
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import MdPreview from "@/v2/components/shared/markdownPreview";
 import { useFetchState } from "@/v2/composables/useFetchState";
 import { useReadingProgress } from "@/v2/composables/useReadingProgress";
 import { useThemeMode } from "@/v2/composables/useThemeMode";
@@ -24,7 +23,7 @@ const props = defineProps<{
   /** ROM id + file id persist the reading position; without them the progress
    *  bar still tracks the session's scroll. */
   romId?: number;
-  fileId?: number;
+  fileId?: number | undefined;
   /** Show a danger-tinted delete button at the end of the toolbar. */
   deletable?: boolean;
   /** Show a re-download button when a scraped source URL exists. */
@@ -171,9 +170,6 @@ watch(
       </REmptyState>
       <MdPreview
         v-else
-        no-highlight
-        no-katex
-        no-mermaid
         :model-value="content"
         :theme="mdTheme"
         language="en-US"
