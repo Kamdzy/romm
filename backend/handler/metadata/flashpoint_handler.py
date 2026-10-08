@@ -167,16 +167,16 @@ class FlashpointHandler(MetadataHandler):
         # Remove file extension
         name = search_term.rsplit('.', 1)[0] if '.' in search_term else search_term
         
-        # Pattern to match a full UUID (8-4-4-4-12 hex digits) followed by optional timestamp
+        # Pattern to match a full UUID (8-4-4-4-12 hex digits), with or without a trailing timestamp
         # Captures the first 5 segments only (8-4-4-4-12)
         # Format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx-timestamp
-        guid_pattern = r'^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-\d+'
+        guid_pattern = r'^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'
         match = re.match(guid_pattern, name, re.IGNORECASE)
-        
+
         if match:
             return match.group(1)
-        
-        return name
+
+        return None
 
     async def search_games(self, search_term: str) -> list[FlashpointGame]:
         """
@@ -319,14 +319,13 @@ class FlashpointHandler(MetadataHandler):
         if is_valid_uuid(file_uuid):
             return await self.get_rom_by_id(flashpoint_id=file_uuid)
 
-        # Normalize the search term
-        search_term = fs_rom_handler.get_file_name_with_no_tags(fs_name)
-        
-        # Don't normalize the search term to preserve GUID format
-        # search_term = self.normalize_search_term(
-        #     fs_name_no_tags, remove_punctuation=False
-        # )
-        
+        # GUID filenames are searched verbatim; titles are normalized
+        search_term = fs_name_no_tags
+        if self._extract_game_guid(search_term) is None:
+            search_term = self.normalize_search_term(
+                fs_name_no_tags, remove_punctuation=False
+            )
+
         # Search for games
         games = await self.search_games(search_term)
 
