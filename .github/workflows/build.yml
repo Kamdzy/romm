@@ -36,7 +36,7 @@ env:
 jobs:
   validate-tag-semver:
     if: github.repository == 'rommapp/romm'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -203,7 +203,7 @@ jobs:
 
   merge:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       DOCKER_METADATA_ANNOTATIONS_LEVELS: index
@@ -319,7 +319,7 @@ jobs:
       fail-fast: false
       matrix:
         variant: [slim, full]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
