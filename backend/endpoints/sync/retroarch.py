@@ -531,20 +531,15 @@ async def retroarch_sync_put(request: Request, file_path: str) -> Response:
     log.info(f"Cloud sync upload {hl(file_name)} for {hl(str(rom.name), color=BLUE)}")
 
     if parsed.is_state_screenshot:
-        # Written under the owning state's real name, which may differ from the
-        # canonical one, so an existing screenshot is updated rather than forked.
-        owning_state = await asyncio.to_thread(
-            sync_handler.resolve_state_by_slot,
+        # Written under the owning state's real name and emulator, which may
+        # differ from the canonical ones, so an existing screenshot is updated.
+        screenshot_file_name, screenshot_emulator, served = await asyncio.to_thread(
+            sync_handler.screenshot_upload_target,
             request.user,
             rom,
             parsed.emulator,
-            sync_handler.state_name_of_screenshot(file_name),
+            file_name,
         )
-        screenshot_file_name = (
-            f"{owning_state.file_name}.png" if owning_state else file_name
-        )
-        # The state may be filed under another emulator sharing this core folder.
-        screenshot_emulator = owning_state.emulator if owning_state else parsed.emulator
         try:
             check_filename_length(screenshot_file_name)
         except ValueError:
@@ -554,6 +549,8 @@ async def retroarch_sync_put(request: Request, file_path: str) -> Response:
             request.user, rom, screenshot_emulator
         )
         async with _request_body(request) as body:
+            if served and await sync_handler.screenshot_sent_back(served, body):
+                return _empty(status.HTTP_204_NO_CONTENT)
             await fs_asset_handler.write_file(
                 file=body, path=screenshot_path, filename=screenshot_file_name
             )
@@ -582,14 +579,14 @@ async def retroarch_sync_put(request: Request, file_path: str) -> Response:
 
     # A state resolved by slot may have its own file name and emulator; writing
     # to them keeps the row pointing at the fresh bytes instead of orphaning them.
-    existing = await asyncio.to_thread(
-        sync_handler.resolve_state_by_slot,
+    slot = await asyncio.to_thread(
+        sync_handler.slot_states,
         request.user,
         rom,
         parsed.emulator,
         file_name,
-        prefer_on_disk=False,
     )
+    existing = slot.own_head
     write_file_name = existing.file_name if existing else file_name
     emulator = existing.emulator if existing else parsed.emulator
     asset_path = sync_handler.build_asset_file_path(
@@ -597,6 +594,9 @@ async def retroarch_sync_put(request: Request, file_path: str) -> Response:
     )
 
     async with _request_body(request) as body:
+        content_hash, is_copy = await sync_handler.check_against_capture(slot, body)
+        if is_copy:
+            return _empty(status.HTTP_204_NO_CONTENT)
         await fs_asset_handler.write_file(
             file=body, path=asset_path, filename=write_file_name
         )
@@ -607,6 +607,7 @@ async def retroarch_sync_put(request: Request, file_path: str) -> Response:
         platform_fs_slug=rom.platform.fs_slug,
         rom_id=rom.id,
         emulator=emulator,
+        content_hash=content_hash,
     )
     await asyncio.to_thread(_record_state, request.user, rom, parsed, existing, scanned)
     # The row moves with the bytes when it was filed elsewhere, e.g. under the
@@ -740,13 +741,18 @@ async def retroarch_sync_delete(request: Request, file_path: str) -> Response:
         return _empty(status.HTTP_204_NO_CONTENT)
 
     if parsed.is_state_screenshot:
-        screenshot = await asyncio.to_thread(
-            sync_handler.resolve_state_screenshot_by_slot,
+        owning_state, screenshot = await asyncio.to_thread(
+            sync_handler.slot_screenshot,
             request.user,
             rom,
             parsed.emulator,
             parsed.file_name,
         )
+        if owning_state is None:
+            return _empty(status.HTTP_404_NOT_FOUND)
+        if owning_state.is_stream_capture:
+            # A capture is never deleted here, so its screenshot stays too.
+            return _empty(status.HTTP_204_NO_CONTENT)
         if not screenshot:
             return _empty(status.HTTP_404_NOT_FOUND)
 
@@ -757,18 +763,19 @@ async def retroarch_sync_delete(request: Request, file_path: str) -> Response:
         return _empty(status.HTTP_204_NO_CONTENT)
 
     # Every alias in the slot goes, or an older one would resurface at this path.
-    states = await asyncio.to_thread(
-        sync_handler.states_in_slot,
+    # Captures stay, so the newest of them is served here next.
+    slot = await asyncio.to_thread(
+        sync_handler.slot_states,
         request.user,
         rom,
         parsed.emulator,
         parsed.file_name,
     )
-    if not states:
+    if slot.served is None:
         return _empty(status.HTTP_404_NOT_FOUND)
 
     log.info(f"Cloud sync delete {hl(parsed.file_name)} [{rom.platform_slug}]")
-    for state in states:
+    for state in slot.own:
         await asyncio.to_thread(db_state_handler.delete_state, state.id)
         with suppress(FileNotFoundError):
             await fs_asset_handler.remove_file(file_path=state.full_path)
