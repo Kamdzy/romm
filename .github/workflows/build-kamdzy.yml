@@ -87,25 +87,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.REGISTRY_TOKEN }}
 
-      # - name: Generate Docker metadata (slim)
-      #   id: meta-slim
-      #   uses: docker/metadata-action@v5.8.0
-      #   with:
-      #     images: |
-      #       name=ghcr.io/kamdzy/romm
-      #     flavor: |
-      #       latest=auto
-      #       suffix=-slim,onlatest=true
-      #     tags: |
-      #       type=semver,pattern={{version}}
-      #       type=semver,pattern={{major}}.{{minor}}
-      #       type=semver,pattern={{major}}
-      #       type=raw,value=latest-slim,enable=true
-      #     labels: |
-      #       org.opencontainers.image.version={{version}}-slim
-      #       org.opencontainers.image.title="kamdzy/romm"
-      #       org.opencontainers.image.description="RomM (ROM Manager) allows you to scan, enrich, and browse your game collection with a clean and responsive interface. With support for multiple platforms, various naming schemes and custom tags, RomM is a must-have for anyone who plays on emulators."
-      #       org.opencontainers.image.licenses="AGPLv3"
+      - name: Generate Docker metadata (slim)
+        id: meta-slim
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: |
+            name=ghcr.io/kamdzy/romm
+          flavor: |
+            latest=false
+          tags: |
+            type=semver,pattern={{version}},suffix=-slim
+            type=semver,pattern={{major}}.{{minor}},suffix=-slim
+            type=semver,pattern={{major}},suffix=-slim
+            type=raw,value=latest-slim,enable=true
+          labels: |
+            org.opencontainers.image.version={{version}}-slim
+            org.opencontainers.image.title="kamdzy/romm"
+            org.opencontainers.image.description="RomM (ROM Manager) allows you to scan, enrich, and browse your game collection with a clean and responsive interface. With support for multiple platforms, various naming schemes and custom tags, RomM is a must-have for anyone who plays on emulators."
+            org.opencontainers.image.licenses="AGPLv3"
 
       - name: Generate Docker metadata (full)
         id: meta
@@ -130,19 +129,17 @@ jobs:
         run: |
           sed -i "s/<version>/${VERSION}/" backend/__version__.py
 
-      # - name: Build slim image
-      #   id: build-slim
-      #   uses: docker/build-push-action@v6.18.0
-      #   with:
-      #     file: docker/Dockerfile
-      #     context: .
-      #     push: true
-      #     platforms: linux/amd64
-      #     tags: ${{ steps.meta-slim.outputs.tags }}
-      #     labels: ${{ steps.meta-slim.outputs.labels }}
-      #     target: slim-image
-      #     build-args: |
-      #       UV_EXCLUDE_NEWER=${{ steps.exclude-newer.outputs.date }}
+      - name: Build slim image
+        id: build-slim
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          file: docker/Dockerfile
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta-slim.outputs.tags }}
+          labels: ${{ steps.meta-slim.outputs.labels }}
+          target: slim-image
 
       - name: Build full image
         id: build-full
