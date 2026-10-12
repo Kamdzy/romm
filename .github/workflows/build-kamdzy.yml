@@ -8,32 +8,35 @@ on:
     types: [published]
   workflow_dispatch: # Allow manual trigger
     inputs:
+      # trunk-ignore(checkov/CKV_GHA_7)
       tag_name:
         description: "Release tag name (e.g., 4.3.1-kam)"
         required: true
         type: string
 
 permissions:
-  id-token: write
-  contents: write
-  packages: write
-  actions: write
+  contents: read
 
 jobs:
   validate-tag-semver:
     runs-on: ubuntu-latest
+    permissions: {}
     outputs:
       valid: ${{ steps.check_tag.outputs.valid }}
       tag: ${{ steps.check_tag.outputs.tag }}
     steps:
       - name: Check if tag follows SemVer
         id: check_tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag_name }}
         run: |
           # Get tag from release event or workflow_dispatch input
-          if [ "${{ github.event_name }}" = "release" ]; then
-            TAG="${{ github.event.release.tag_name }}"
+          if [ "$EVENT_NAME" = "release" ]; then
+            TAG="$RELEASE_TAG"
           else
-            TAG="${{ inputs.tag_name }}"
+            TAG="$INPUT_TAG"
           fi
 
           echo "Validating tag: $TAG"
@@ -60,8 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     if: needs.validate-tag-semver.outputs.valid == 'true'
     permissions:
-      id-token: write
-      contents: write
+      contents: read
       packages: write
     steps:
       - name: Run only once per release
@@ -69,6 +71,8 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
@@ -121,8 +125,10 @@ jobs:
             org.opencontainers.image.licenses="AGPLv3"
 
       - name: Set version
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          sed -i 's/<version>/${{ steps.meta.outputs.version }}/' backend/__version__.py
+          sed -i "s/<version>/${VERSION}/" backend/__version__.py
 
       # - name: Build slim image
       #   id: build-slim

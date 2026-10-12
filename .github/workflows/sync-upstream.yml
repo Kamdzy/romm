@@ -14,10 +14,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4.3.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           token: ${{ secrets.REGISTRY_TOKEN }}
+          persist-credentials: false
 
       - name: Configure Git
         run: |
@@ -43,8 +44,10 @@ jobs:
 
       - name: Push changes
         if: steps.sync.outputs.conflict == 'false'
+        env:
+          PUSH_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
         run: |
-          git push origin master
+          git push "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" master
 
       - name: Send Discord notification on conflict
         if: failure() && steps.sync.outputs.conflict == 'true'

@@ -51,6 +51,7 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.branch || github.head_ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: PR comment build starting
         if: github.event_name == 'pull_request'
@@ -117,12 +118,13 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           HEAD_REF: ${{ github.head_ref }}
+          COMMENT_ID: ${{ steps.build-comment.outputs.comment-id }}
         with:
           script: |
             const owner = context.repo.owner;
             const tag = process.env.HEAD_REF;
             github.rest.issues.updateComment({
-              comment_id: ${{ steps.build-comment.outputs.comment-id }},
+              comment_id: Number(process.env.COMMENT_ID),
               owner: owner,
               repo: context.repo.repo,
               body: `✅ Preview build completed!\n\nDocker image: \`ghcr.io/${owner}/romm-testing:${tag}\``
