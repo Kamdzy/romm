@@ -158,19 +158,21 @@ class FlashpointHandler(MetadataHandler):
             62e21497-738d-0335-19b4-9df881f77fe1-1690492579053.zip -> 62e21497-738d-0335-19b4-9df881f77fe1
             0711da81-2cbe-452f-8e53-4f5c41c6960c-1704594311120.zip -> 0711da81-2cbe-452f-8e53-4f5c41c6960c
             06c0ee5f-8ce2-402b-9ead-964da44d93ce-1688641860398.zip -> 06c0ee5f-8ce2-402b-9ead-964da44d93ce
-        
+
         :param search_term: The search term (filename).
         :return: The stripped game GUID (first 5 segments) or None if not a valid GUID format.
         """
         import re
-        
+
         # Remove file extension
-        name = search_term.rsplit('.', 1)[0] if '.' in search_term else search_term
-        
+        name = search_term.rsplit(".", 1)[0] if "." in search_term else search_term
+
         # Pattern to match a full UUID (8-4-4-4-12 hex digits), with or without a trailing timestamp
         # Captures the first 5 segments only (8-4-4-4-12)
         # Format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx-timestamp
-        guid_pattern = r'^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'
+        guid_pattern = (
+            r"^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
+        )
         match = re.match(guid_pattern, name, re.IGNORECASE)
 
         if match:
@@ -201,10 +203,16 @@ class FlashpointHandler(MetadataHandler):
                         "filter": "false",
                     },
                 )
-                
+
                 if response:
-                    games_data = json.loads(response) if isinstance(response, str) else response
-                    if games_data and isinstance(games_data, list) and len(games_data) > 0:
+                    games_data = (
+                        json.loads(response) if isinstance(response, str) else response
+                    )
+                    if (
+                        games_data
+                        and isinstance(games_data, list)
+                        and len(games_data) > 0
+                    ):
                         # log.debug(f"Found {len(games_data)} game(s) using game GUID")
                         return self._parse_games_data(games_data)
 
@@ -219,7 +227,9 @@ class FlashpointHandler(MetadataHandler):
             )
 
             if response:
-                games_data = json.loads(response) if isinstance(response, str) else response
+                games_data = (
+                    json.loads(response) if isinstance(response, str) else response
+                )
                 if games_data and isinstance(games_data, list) and len(games_data) > 0:
                     # log.debug(f"Found {len(games_data)} game(s) using full name smartSearch")
                     return self._parse_games_data(games_data)
@@ -234,10 +244,16 @@ class FlashpointHandler(MetadataHandler):
                         "filter": "false",
                     },
                 )
-                
+
                 if response:
-                    games_data = json.loads(response) if isinstance(response, str) else response
-                    if games_data and isinstance(games_data, list) and len(games_data) > 0:
+                    games_data = (
+                        json.loads(response) if isinstance(response, str) else response
+                    )
+                    if (
+                        games_data
+                        and isinstance(games_data, list)
+                        and len(games_data) > 0
+                    ):
                         # log.debug(f"Found {len(games_data)} game(s) using game GUID smartSearch")
                         return self._parse_games_data(games_data)
 
@@ -248,10 +264,12 @@ class FlashpointHandler(MetadataHandler):
             log.error("Error searching Flashpoint API: %s", exc)
             raise
 
-    def _parse_games_data(self, games_data: list[dict[str, Any]]) -> list[FlashpointGame]:
+    def _parse_games_data(
+        self, games_data: list[dict[str, Any]]
+    ) -> list[FlashpointGame]:
         """
         Parse raw game data from API response into FlashpointGame objects.
-        
+
         :param games_data: List of raw game data from API.
         :return: List of FlashpointGame objects.
         """
@@ -260,9 +278,7 @@ class FlashpointHandler(MetadataHandler):
                 {
                     "id": game_data["id"],
                     "title": game_data["title"],
-                    "original_description": game_data.get(
-                        "originalDescription", ""
-                    ),
+                    "original_description": game_data.get("originalDescription", ""),
                     "platform": game_data.get("platform", ""),
                     "library": game_data.get("library", ""),
                     "series": game_data.get("series", []),
@@ -335,10 +351,15 @@ class FlashpointHandler(MetadataHandler):
 
         # Check if search term contains a valid GUID
         import re
-        guid_pattern = r'^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'
+
+        guid_pattern = (
+            r"^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
+        )
         game_guid = self._extract_game_guid(search_term)
-        is_valid_guid = bool(game_guid and re.match(guid_pattern, game_guid, re.IGNORECASE))
-        
+        is_valid_guid = bool(
+            game_guid and re.match(guid_pattern, game_guid, re.IGNORECASE)
+        )
+
         # If we have exactly 1 result and search term had a valid GUID, it's a GUID exact match
         if len(games) == 1 and is_valid_guid:
             guid_game = games[0]
@@ -408,7 +429,7 @@ class FlashpointHandler(MetadataHandler):
             return []
 
         search_term = fs_rom_handler.get_file_name_with_no_tags(fs_name)
-        
+
         # Don't normalize the search term to preserve GUID format
         # search_term = self.normalize_search_term(search_term, remove_punctuation=False)
 

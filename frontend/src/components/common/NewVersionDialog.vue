@@ -30,11 +30,11 @@ async function fetchLatestVersion() {
     GITHUB_VERSION.value = json.tag_name;
 
     const publishedAt = new Date(json.published_at);
-    
+
     // Coerce versions to handle custom suffixes like -kam
     const currentVersion = semver.coerce(VERSION);
     const githubVersion = semver.coerce(json.tag_name);
-    
+
     latestVersionDismissed.value =
       // Hide if the version is not valid
       !currentVersion ||
@@ -65,9 +65,7 @@ onMounted(async () => {
   <div v-if="semver.coerce(VERSION)" class="pa-3 sticky-bottom">
     <v-slide-y-transition>
       <v-card
-        v-if="
-          GITHUB_VERSION && hasNewerVersion && !latestVersionDismissed
-        "
+        v-if="GITHUB_VERSION && hasNewerVersion && !latestVersionDismissed"
         class="pa-1 border-selected mx-auto"
         max-width="fit-content"
       >
