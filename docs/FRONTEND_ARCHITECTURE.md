@@ -2,7 +2,7 @@
 
 Comprehensive documentation of the RomM frontend: a Vue 3 single-page application powering the retro gaming platform UI.
 
-> **Scope: this document describes the v1 UI** (`src/views/`, `src/components/`, `src/console/`, `src/layouts/`), which is frozen pending deletion. The v2 rewrite under `src/v2/` shares the Vue/Vite/Pinia/router/i18n/Socket.IO foundation described here, but has its own design system: **no Vuetify, and no Tailwind utility classes** (the Tailwind stylesheet is still loaded app-wide, see CSS Stack below). It styles with generated tokens plus per-component scoped CSS. For v2, read the `frontend-v2-components`, `frontend-v2-theming`, `frontend-v2-input`, and `frontend-v2-patterns` skills in `.claude/skills/`.
+> **Scope: this document still describes the removed v1 UI** (`src/views/`, `src/components/`, `src/console/`, `src/layouts/`), and its sections on directory layout, components, views and console mode no longer match the code. The Vue/Vite/Pinia/router/i18n/Socket.IO foundation it covers is shared with the current UI under `src/`, which has its own design system: **no component library and no utility-class framework** (Vuetify and Tailwind are gone; a base reset lives in `src/styles/reset.css`). It styles with generated tokens plus per-component scoped CSS. For the current UI, read the `frontend-components`, `frontend-theming`, `frontend-input`, and `frontend-patterns` skills in `.claude/skills/`.
 
 ---
 
@@ -17,34 +17,32 @@ Comprehensive documentation of the RomM frontend: a Vue 3 single-page applicatio
 7. [API & Data Layer](#7-api--data-layer)
 8. [Component Architecture](#8-component-architecture)
 9. [Views & Pages](#9-views--pages)
-10. [Console Mode](#10-console-mode)
-11. [Emulation Integration](#11-emulation-integration)
-12. [Theming & Styling](#12-theming--styling)
-13. [Internationalization (i18n)](#13-internationalization-i18n)
-14. [Real-Time Communication](#14-real-time-communication)
-15. [Caching Strategy](#15-caching-strategy)
-16. [Utilities & Composables](#16-utilities--composables)
-17. [Build & Tooling](#17-build--tooling)
-18. [Type System](#18-type-system)
+10. [Emulation Integration](#10-emulation-integration)
+11. [Theming & Styling](#11-theming--styling)
+12. [Internationalization (i18n)](#12-internationalization-i18n)
+13. [Real-Time Communication](#13-real-time-communication)
+14. [Caching Strategy](#14-caching-strategy)
+15. [Utilities & Composables](#15-utilities--composables)
+16. [Build & Tooling](#16-build--tooling)
+17. [Type System](#17-type-system)
 
 ---
 
 ## 1. Overview
 
-| Property             | Value                                        |
-| -------------------- | -------------------------------------------- |
-| **Framework**        | Vue 3.5 (Composition API, `<script setup>`)  |
-| **Build Tool**       | Vite 6.4.2                                   |
-| **Language**         | TypeScript 5.9.3 (`noImplicitAny: true`)     |
-| **UI Library**       | Vuetify 4.2.1 (Material Design), v1 only     |
-| **CSS**              | Tailwind CSS 4.3.1 + Vuetify themes, v1 only |
-| **State Management** | Pinia 3.0.1 (18 stores)                      |
-| **Routing**          | Vue Router 5.3.1                             |
-| **HTTP Client**      | Axios 1.15.0                                 |
-| **i18n**             | vue-i18n 11.1.10 (17 languages)              |
-| **Real-time**        | Socket.IO Client 4.7.5                       |
-| **Icons**            | Material Design Icons (MDI) 7.4.47           |
-| **Node**             | 24 (via `.nvmrc`)                            |
+| Property             | Value                                       |
+| -------------------- | ------------------------------------------- |
+| **Framework**        | Vue 3.5 (Composition API, `<script setup>`) |
+| **Build Tool**       | Vite 6.4.2                                  |
+| **Language**         | TypeScript 5.9.3 (`noImplicitAny: true`)    |
+| **CSS**              | Generated tokens + scoped component CSS     |
+| **State Management** | Pinia 3.0.1 (18 stores)                     |
+| **Routing**          | Vue Router 5.3.1                            |
+| **HTTP Client**      | Axios 1.15.0                                |
+| **i18n**             | vue-i18n 11.1.10 (17 languages)             |
+| **Real-time**        | Socket.IO Client 4.7.5                      |
+| **Icons**            | Material Design Icons (MDI) 7.4.47          |
+| **Node**             | 24 (via `.nvmrc`)                           |
 
 **Total:** ~216 Vue components (168 under `components/`, rest in views/console/layouts), 18 Pinia stores, 17 API service modules, 36 named routes across 3 layouts.
 
@@ -105,7 +103,7 @@ Comprehensive documentation of the RomM frontend: a Vue 3 single-page applicatio
 │  services/socket Socket.IO client                         │
 ├─────────────────────────────────────────────────────────┤
 │                    INFRASTRUCTURE LAYER                   │
-│  plugins/        Vuetify, Pinia, i18n, Router             │
+│  plugins/        Pinia, i18n, Router                      │
 │  styles/         Themes, global CSS                       │
 │  locales/        17 language packs                        │
 │  types/          TypeScript definitions                   │
@@ -137,9 +135,8 @@ frontend/
     ├── RomM.vue                   # Root component
     │
     ├── plugins/                   # Vue plugin setup
-    │   ├── index.ts               # Plugin registration (Vuetify, Pinia, i18n, Mitt)
+    │   ├── index.ts               # Plugin registration (Pinia, i18n, Mitt)
     │   ├── router.ts              # Vue Router (36 routes, guards, permissions)
-    │   ├── vuetify.ts             # Vuetify instance (themes, icons)
     │   ├── pinia.ts               # Pinia store with router injection (and its $router type)
     │   ├── mdeditor.ts            # Markdown editor with XSS plugin
     │   └── transition/            # View Transitions API polyfill
@@ -310,7 +307,7 @@ index.html
   └── <script type="module" src="src/main.ts">
         │
         ├── Create Vue app with RomM.vue as root
-        ├── Register plugins (Vuetify, Pinia, i18n, Mitt, MD Editor)
+        ├── Register plugins (Pinia, i18n, Mitt, MD Editor)
         ├── Install Vue Router
         │
         ├── Initialize critical stores (before mount):
@@ -325,12 +322,11 @@ index.html
 ### Plugin Registration Order
 
 ```text
-1. Vuetify     : Material Design components, themes, icons
-2. Pinia       : State management (with router injection)
-3. vue-i18n    : Internationalization (17 locales)
-4. Mitt        : Event emitter (provided as 'emitter')
-5. MD Editor   : Markdown editor with XSS plugin
-6. Vue Router  : Navigation with guards
+1. Pinia       : State management (with router injection)
+2. vue-i18n    : Internationalization (17 locales)
+3. Mitt        : Event emitter (provided as 'emitter')
+4. MD Editor   : Markdown editor with XSS plugin
+5. Vue Router  : Navigation with guards
 ```
 
 ### Request Lifecycle
@@ -389,7 +385,6 @@ Component Action
 │   ├── /rom/:rom                 → Game details (8 tabs)
 │   ├── /rom/:rom/ejs             → EmulatorJS player
 │   ├── /rom/:rom/ruffle          → Ruffle Flash player
-│   ├── /april-fools              → April Fools easter egg (toggleable)
 │   ├── /scan                     → Library scanner [platforms.write]
 │   ├── /patcher                  → ROM patcher
 │   ├── /user/:user               → User profile
@@ -401,14 +396,6 @@ Component Action
 │   ├── /server-stats             → Library statistics
 │   └── /*                        → 404
 │
-└── Console Layout (authenticated, TV/gamepad)
-    ├── /console                  → Console home
-    ├── /console/platform/:id     → Console game list
-    ├── /console/collection/:id   → Console collection
-    ├── /console/collection/smart/:id
-    ├── /console/collection/virtual/:id
-    ├── /console/rom/:rom         → Console game details
-    └── /console/rom/:rom/play    → Console emulator
 ```
 
 ### Route Guards
@@ -685,7 +672,7 @@ Tier 3: Console Mode
 
 ### Dialog System
 
-All dialogs use Vuetify's `v-dialog` wrapped in a custom `RDialog` component:
+All dialogs use the custom `RDialog` component:
 
 ```text
 RDialog (wrapper)
@@ -758,87 +745,7 @@ Supports: `.ips`, `.ups`, `.bps`, `.ppf`, `.rup`, `.aps`, `.bdf`, `.pmsr`, `.vcd
 
 ---
 
-## 10. Console Mode
-
-A complete TV/gamepad-optimized interface under `/console/`.
-
-### Architecture
-
-```text
-Console Layout
-├── Input Bus (keyboard + gamepad → actions)
-├── Theme System (CSS variables per theme)
-├── Spatial Navigation (grid-based focus)
-├── Sound Effects (Web Audio synthesis)
-│
-├── Home View
-│   ├── Platform cards (spatial nav)
-│   ├── Continue playing
-│   └── Collections grid
-│
-├── Games List View
-│   ├── Game cards with lazy loading
-│   └── Virtual scrolling
-│
-├── Game Detail View
-│   ├── Description, metadata, screenshots
-│   ├── Save state management
-│   └── Play button → Emulator
-│
-└── Play View
-    └── EmulatorJS with save/state/BIOS selection
-```
-
-### Input System
-
-```text
-Hardware Input (keyboard / gamepad)
-    │
-    ├── Keyboard Listener (keydown → action mapping)
-    │   └── Ignores when focused on INPUT/TEXTAREA
-    │
-    ├── Gamepad Poller (requestAnimationFrame loop)
-    │   ├── Button press detection (with repeat delay)
-    │   └── Analog stick threshold (0.2)
-    │
-    └── Input Bus (stack-based scope manager)
-        ├── Global shortcuts (always active)
-        ├── Scoped listeners (context-dependent)
-        └── Action dispatch with SFX feedback
-```
-
-**12 Input Actions:** `moveUp`, `moveDown`, `moveLeft`, `moveRight`, `confirm`, `back`, `menu`, `delete`, `tabNext`, `tabPrev`, `toggleFavorite`
-
-**Repeat Timing:** 350ms initial delay, 120ms repeat
-
-### Procedural Sound Effects (Web Audio API)
-
-| Sound      | Frequency       | Duration   | When               |
-| ---------- | --------------- | ---------- | ------------------ |
-| `move`     | 860Hz           | 20ms       | Navigation         |
-| `confirm`  | 680→880Hz sweep | 19ms       | Selection          |
-| `back`     | 300Hz           | 85ms       | Return             |
-| `error`    | 180Hz + 140Hz   | 180ms      | Failure            |
-| `delete`   | 260Hz + 180Hz   | 120ms      | Destructive action |
-| `favorite` | 600Hz + 950Hz   | Dual burst | Toggle             |
-
-All synthesized with sine/noise blend, exponential envelopes, low-pass filter, and waveshaper saturation.
-
-### Console Composables
-
-| Composable           | Purpose                                         |
-| -------------------- | ----------------------------------------------- |
-| `useSpatialNav`      | Grid navigation with boundary enforcement       |
-| `useConsoleTheme`    | Theme CSS variable injection                    |
-| `useThemeAssets`     | Format-aware asset resolution (SVG > PNG > JPG) |
-| `useBackgroundArt`   | Double-buffered background transitions          |
-| `useElementRegistry` | Focus element tracking per section              |
-| `useInputScope`      | Dependency-injected input subscription          |
-| `useRovingDom`       | ARIA roving tabindex with auto-scroll           |
-
----
-
-## 11. Emulation Integration
+## 10. Emulation Integration
 
 ### EmulatorJS
 
@@ -887,7 +794,7 @@ The dev server and `vite preview` have no nginx in front of them, so `scripts/pl
 
 ---
 
-## 12. Theming & Styling
+## 11. Theming & Styling
 
 ### Theme System
 
@@ -900,19 +807,17 @@ The dev server and `vite preview` have no nginx in front of them, so `scripts/pl
 
 **Detection priority:** `settings.theme` localStorage → `prefers-color-scheme` media query → dark default
 
-Vuetify handles theme switching. Additional shared brand colors: `romm-red`, `romm-green`, `romm-blue`, `romm-gold`.
+Theme switching toggles the `.r-dark` / `.r-light` token classes on `<html>`. Additional shared brand colors: `romm-red`, `romm-green`, `romm-blue`, `romm-gold`.
 
 ### CSS Stack
 
-| Layer     | Technology                         | Scope                                                                                                          |
-| --------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Component | Vuetify classes + scoped `<style>` | Per-component                                                                                                  |
-| Utility   | Tailwind CSS 4.3                   | Inline utility classes; `@import "tailwindcss"` lives in `console/index.css`, which `main.ts` imports app-wide |
-| Global    | `styles/common.css`                | App-wide utilities                                                                                             |
-| Scrollbar | `styles/scrollbar.css`             | Custom scrollbar                                                                                               |
-| Console   | `console/index.css`                | Console mode styles (plus the Tailwind import above)                                                           |
+| Layer     | Technology                       | Scope            |
+| --------- | -------------------------------- | ---------------- |
+| Component | Scoped `<style>`                 | Per-component    |
+| Global    | `styles/global.css`, `reset.css` | App-wide         |
+| Scrollbar | `styles/scrollbar.css`           | Custom scrollbar |
 
-v2 opts out of this stack entirely: `src/v2/styles/tokens.css` (generated from `src/v2/tokens/index.ts`) plus `global.css`, scoped under `.r-v2`, with per-component `<style scoped>`.
+v2 opts out of this stack entirely: `src/styles/tokens.css` (generated from `src/tokens/index.ts`) plus `global.css`, scoped under `.r-app`, with per-component `<style scoped>`.
 
 ### Procedural Cover Generation
 
@@ -926,7 +831,7 @@ v2 opts out of this stack entirely: `src/v2/styles/tokens.css` (generated from `
 
 ---
 
-## 13. Internationalization (i18n)
+## 12. Internationalization (i18n)
 
 ### Setup
 
@@ -964,7 +869,7 @@ Each locale directory contains translation files per feature:
 
 ---
 
-## 14. Real-Time Communication
+## 13. Real-Time Communication
 
 ### Socket.IO Client
 
@@ -990,7 +895,7 @@ io({
 
 ---
 
-## 15. Caching Strategy
+## 14. Caching Strategy
 
 ### Experimental Browser Cache
 
@@ -1019,7 +924,7 @@ Request Flow with Cache:
 
 ---
 
-## 16. Utilities & Composables
+## 15. Utilities & Composables
 
 ### Global Composables
 
@@ -1077,7 +982,7 @@ Procedural SVG generation for:
 
 ---
 
-## 17. Build & Tooling
+## 16. Build & Tooling
 
 ### Vite Configuration
 
@@ -1091,12 +996,10 @@ Procedural SVG generation for:
 
 **Plugins:**
 
-1. Tailwind CSS (`@tailwindcss/vite`)
-2. Vue 3 (`@vitejs/plugin-vue`)
-3. Vuetify auto-import (`vite-plugin-vuetify`, 57 pre-optimized components)
-4. PWA (`vite-plugin-pwa`, service worker, installable)
-5. HTTPS (`vite-plugin-mkcert`, optional dev HTTPS)
-6. Static copy (ROM patcher JS assets)
+1. Vue 3 (`@vitejs/plugin-vue`)
+2. PWA (`vite-plugin-pwa`, service worker, installable)
+3. HTTPS (`vite-plugin-mkcert`, optional dev HTTPS)
+4. Static copy (ROM patcher JS assets)
 
 ### Scripts
 
@@ -1130,7 +1033,7 @@ Generated types used throughout stores and API services for type-safe backend co
 
 ---
 
-## 18. Type System
+## 17. Type System
 
 ### Generated Types (`__generated__/models/`)
 
@@ -1170,7 +1073,7 @@ Auto-generated from backend OpenAPI schema:
 
 ```json
 "@/*" → "./src/*"
-"@v2/*" → "./src/v2/*"
+"@/*" → "./src/*"
 ```
 
 Used throughout: `import { ... } from "@/stores/roms"`. Vite and Vitest take their aliases from `scripts/aliases.ts`, which also points a bare `md-editor-v3` import at `plugins/mdeditor.ts`; that module applies the raw-HTML and XSS config before re-exporting the package. `tsconfig.app.json` maps the same specifier, so editors and `vue-tsc` resolve it to that module too.
@@ -1179,18 +1082,15 @@ Used throughout: `import { ... } from "@/stores/roms"`. Vite and Vitest take the
 
 ## Appendix: Key Design Patterns
 
-| Pattern                    | Where                  | Purpose                                          |
-| -------------------------- | ---------------------- | ------------------------------------------------ |
-| **Composition API**        | All components         | `<script setup>` with reactive refs              |
-| **Pinia stores**           | `stores/`              | Centralized state with actions/getters           |
-| **Mitt event bus**         | Cross-component        | Loosely-coupled dialog/notification triggers     |
-| **Composables**            | `composables/`         | Reusable stateful logic (singleton where needed) |
-| **Stale-while-revalidate** | `services/cache/`      | Return cached, update in background              |
-| **Chunked upload**         | `services/api/rom.ts`  | 10MB chunks with retry                           |
-| **Spatial navigation**     | `console/`             | Grid-based focus for gamepad/keyboard            |
-| **Input scoping**          | `console/input/bus.ts` | Stack-based context for input handling           |
-| **Procedural audio**       | `console/utils/sfx.ts` | Web Audio API synthesis                          |
-| **Double buffering**       | `useBackgroundArt`     | Smooth background transitions                    |
-| **View Transitions**       | `plugins/transition/`  | CSS View Transitions API                         |
-| **OpenAPI codegen**        | `__generated__/`       | Type-safe API communication                      |
-| **Feature flags**          | `heartbeatStore`       | Server-driven UI feature toggling                |
+| Pattern                    | Where                 | Purpose                                          |
+| -------------------------- | --------------------- | ------------------------------------------------ |
+| **Composition API**        | All components        | `<script setup>` with reactive refs              |
+| **Pinia stores**           | `stores/`             | Centralized state with actions/getters           |
+| **Mitt event bus**         | Cross-component       | Loosely-coupled dialog/notification triggers     |
+| **Composables**            | `composables/`        | Reusable stateful logic (singleton where needed) |
+| **Stale-while-revalidate** | `services/cache/`     | Return cached, update in background              |
+| **Chunked upload**         | `services/api/rom.ts` | 10MB chunks with retry                           |
+| **Double buffering**       | `useBackgroundArt`    | Smooth background transitions                    |
+| **View Transitions**       | `plugins/transition/` | CSS View Transitions API                         |
+| **OpenAPI codegen**        | `__generated__/`      | Type-safe API communication                      |
+| **Feature flags**          | `heartbeatStore`      | Server-driven UI feature toggling                |
