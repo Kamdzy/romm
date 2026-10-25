@@ -46,7 +46,7 @@ function onDismiss() {
 
 function onOpenRelease() {
   window.open(
-    `https://github.com/rommapp/romm/releases/tag/${latestVersion.value}`,
+    `https://github.com/kamdzy/romm/releases/tag/${latestVersion.value}`,
     "_blank",
     "noopener,noreferrer",
   );
@@ -55,7 +55,7 @@ function onOpenRelease() {
 async function fetchLatestVersion() {
   try {
     const response = await fetch(
-      "https://api.github.com/repos/rommapp/romm/releases/latest",
+      "https://api.github.com/repos/kamdzy/romm/releases/latest",
     );
     const json = await response.json();
     latestVersion.value = json.tag_name;

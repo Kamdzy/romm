@@ -30,7 +30,7 @@ export function useVersionDisplay() {
     const nightlyCommit = NIGHTLY_VERSION_RE.exec(version.value)?.[1];
     return nightlyCommit
       ? `https://github.com/rommapp/romm/commit/${nightlyCommit}`
-      : `https://github.com/rommapp/romm/releases/tag/${version.value}`;
+      : `https://github.com/kamdzy/romm/releases/tag/${version.value}`;
   });
 
   return { version, href };

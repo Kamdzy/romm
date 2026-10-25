@@ -43,7 +43,7 @@ const links = computed<Link[]>(() => [
     icon: "mdi-code-braces",
     label: t("common.about-source-code"),
     value: "GitHub",
-    href: "https://github.com/rommapp/romm",
+    href: "https://github.com/kamdzy/romm",
   },
   {
     icon: "mdi-file-document-outline",

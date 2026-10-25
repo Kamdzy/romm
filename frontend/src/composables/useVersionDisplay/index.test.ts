@@ -19,7 +19,7 @@ describe("useVersionDisplay", () => {
     const { version, href } = useVersionDisplay();
     expect(version.value).toBe("4.5.0");
     expect(href.value).toBe(
-      "https://github.com/rommapp/romm/releases/tag/4.5.0",
+      "https://github.com/kamdzy/romm/releases/tag/4.5.0",
     );
   });
 
@@ -31,7 +31,7 @@ describe("useVersionDisplay", () => {
     const { version, href } = useVersionDisplay();
     expect(version.value).toBe("development");
     expect(href.value).toBe(
-      "https://github.com/rommapp/romm/releases/tag/development",
+      "https://github.com/kamdzy/romm/releases/tag/development",
     );
   });
 
@@ -53,7 +53,7 @@ describe("useVersionDisplay", () => {
     const { version, href } = useVersionDisplay();
     expect(version.value).toBe("4.5.0");
     expect(href.value).toBe(
-      "https://github.com/rommapp/romm/releases/tag/4.5.0",
+      "https://github.com/kamdzy/romm/releases/tag/4.5.0",
     );
   });
 
