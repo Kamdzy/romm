@@ -270,6 +270,48 @@ def test_a_revision_replayed_over_the_migrated_schema_is_a_no_op(
         assert _schema_of(connection, table) == before
 
 
+def test_the_rom_file_category_revision_adds_game_to_an_enum_made_without_it():
+    """0062 upgrades a romfilecategory enum that has no GAME value."""
+    migration = _load_migration("0062_rom_file_category_enum.py")
+
+    with sync_engine.connect() as connection:
+        if not is_postgresql(connection):
+            pytest.skip("only PostgreSQL keeps the enum as a type of its own")
+
+        # A schema of its own, so the shared enum and table stay as migrated.
+        connection.execute(sa.text("CREATE SCHEMA pre_game_category"))
+        connection.execute(sa.text("SET search_path TO pre_game_category"))
+        connection.execute(
+            sa.text(
+                "CREATE TYPE romfilecategory AS ENUM ('DLC', 'HACK', 'MANUAL',"
+                " 'PATCH', 'UPDATE', 'MOD', 'DEMO', 'TRANSLATION', 'PROTOTYPE')"
+            )
+        )
+        connection.execute(sa.text("CREATE TABLE rom_files (category romfilecategory)"))
+        connection.execute(sa.text("INSERT INTO rom_files VALUES ('DLC')"))
+        connection.commit()
+        try:
+            context = MigrationContext.configure(connection)
+            with Operations.context(context), context.begin_transaction():
+                migration.upgrade()
+
+            labels: str = connection.execute(
+                sa.text("SELECT enum_range(NULL::romfilecategory)::text")
+            ).scalar_one()
+            category: str = connection.execute(
+                sa.text("SELECT category::text FROM rom_files")
+            ).scalar_one()
+        finally:
+            connection.rollback()
+            connection.execute(sa.text("RESET search_path"))
+            connection.execute(sa.text("DROP SCHEMA pre_game_category CASCADE"))
+            connection.commit()
+
+    # GAME lands ahead of DLC, where a fresh install has it.
+    assert labels.startswith("{GAME,DLC,")
+    assert category == "DLC"
+
+
 def test_the_play_session_sync_link_revision_reverses_and_replays():
     """0135 drops a column whose constraint each dialect handles differently.
 
@@ -1120,6 +1162,43 @@ def test_the_sibling_platform_names_revision_renames_only_the_stale_name():
         ("videopac-g7400", "Videopac+ G7400"),
         ("c64", "Commodore 64"),
         ("c128-custom", "C128 (custom)"),
+    }
+
+
+def test_the_retired_arcade_slugs_revision_moves_boards_to_arcade_and_back():
+    migration = _load_migration("0155_retired_arcade_slugs.py")
+    for slug, fs_slug in (
+        ("cps2", "cps2"),
+        ("CPS3", "CPS3"),
+        ("system16", "sega16"),
+        ("arcade", "arcade"),
+        ("snes", "snes"),
+    ):
+        make_platform(slug, fs_slug=fs_slug)
+
+    def slugs(connection: sa.Connection) -> set[tuple[str, str]]:
+        return set(connection.execute(sa.text("SELECT fs_slug, slug FROM platforms")))
+
+    with sync_engine.begin() as connection:
+        with Operations.context(MigrationContext.configure(connection)):
+            migration.upgrade()
+            upgraded = slugs(connection)
+            migration.downgrade()
+            downgraded = slugs(connection)
+
+    assert upgraded == {
+        ("cps2", "arcade"),
+        ("CPS3", "arcade"),
+        ("sega16", "arcade"),
+        ("arcade", "arcade"),
+        ("snes", "snes"),
+    }
+    assert downgraded == {
+        ("cps2", "cps2"),
+        ("CPS3", "cps3"),
+        ("sega16", "arcade"),
+        ("arcade", "arcade"),
+        ("snes", "snes"),
     }
 
 
