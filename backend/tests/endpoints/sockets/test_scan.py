@@ -60,7 +60,7 @@ from handler.filesystem.roms_handler import (
 from handler.metadata import meta_gamelist_handler
 from handler.redis_handler import async_cache, redis_lock, scan_queue
 from handler.rom_files import RomFilesRefresh
-from handler.scan_handler import MetadataSource, ScanType
+from handler.scan.sources import MetadataSource, ScanType
 from handler.scan_jobs import SCAN_PLATFORMS_FUNC
 from handler.socket_handler import socket_handler
 from models.audit_event import AuditAction
@@ -3063,7 +3063,6 @@ def identify_harness(mocker):
         scan_module, "scan_rom", AsyncMock(return_value=MagicMock(is_identified=False))
     )
 
-    mocker.patch.object(scan_module, "fs_resource_handler", new=AsyncMock())
     mocker.patch.object(scan_module, "download_rom_resources", new=AsyncMock())
     mocker.patch.object(scan_handler_module, "SimpleRomSchema", MagicMock())
 
