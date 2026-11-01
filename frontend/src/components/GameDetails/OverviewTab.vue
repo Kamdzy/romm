@@ -58,6 +58,7 @@ const props = defineProps<{
   hltb: RomHLTBMetadata | null | undefined;
   lastPlayed: string | null;
   revision: string | null;
+  version: string | null;
   expansions: IGDBRelatedGame[];
   dlcs: IGDBRelatedGame[];
   remakes: IGDBRelatedGame[];
@@ -65,6 +66,9 @@ const props = defineProps<{
   ports: IGDBRelatedGame[];
   similarRoms: SimilarRomSchema[];
 }>();
+
+// CSS keeps a bare CR as a space, so CRLF and classic Mac CR both become LF.
+const summaryText = computed(() => props.summary?.replace(/\r\n?/g, "\n"));
 
 // The same preference hides the "Recommended for you" row on Home: the
 // feature is switched off everywhere at once, not per surface.
@@ -211,21 +215,30 @@ const coverSource = computed(() => {
 <template>
   <section class="overview-tab">
     <!-- 1. Summary -->
-    <p v-if="summary" class="overview-tab__summary">{{ summary }}</p>
+    <p v-if="summaryText" class="overview-tab__summary">{{ summaryText }}</p>
 
-    <!-- 2. Per-ROM fact rows (left-labelled). Revision, Last played +
-         the per-game characteristics (Players, Age rating, RomM
+    <!-- 2. Per-ROM fact rows (left-labelled). Revision, Version, Last
+         played + the per-game characteristics (Players, Age rating, RomM
          collections) get a row each so each fact can render its own
          semantic widget instead of being flattened to a chip list. -->
     <div
       v-if="
-        revision || lastPlayed || hasQuickFacts || userCollectionTiles.length
+        revision ||
+        version ||
+        lastPlayed ||
+        hasQuickFacts ||
+        userCollectionTiles.length
       "
       class="overview-tab__facts"
     >
       <div v-if="revision" class="overview-tab__row">
         <div class="overview-tab__label">{{ t("rom.revision") }}</div>
         <div class="overview-tab__field">{{ revision }}</div>
+      </div>
+
+      <div v-if="version" class="overview-tab__row">
+        <div class="overview-tab__label">{{ t("rom.version") }}</div>
+        <div class="overview-tab__field">{{ version }}</div>
       </div>
 
       <div v-if="lastPlayed" class="overview-tab__row">
@@ -436,6 +449,7 @@ const coverSource = computed(() => {
   font-size: 13.5px;
   line-height: 1.7;
   color: var(--r-color-fg-secondary);
+  white-space: pre-line;
   margin: 0;
 }
 .overview-tab__summary--muted {

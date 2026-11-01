@@ -76,6 +76,7 @@ function mount(props: Record<string, unknown> = {}) {
       hltb: null,
       lastPlayed: null,
       revision: null,
+      version: null,
       expansions: [],
       dlcs: [],
       remakes: [],
@@ -97,6 +98,31 @@ function gridItems(wrapper: ReturnType<typeof mount>) {
     .findAllComponents({ name: "RelatedGamesGrid" })
     .map((c) => c.props("items") as IGDBRelatedGame[]);
 }
+
+describe("OverviewTab summary", () => {
+  it("normalizes CRLF and CR line endings to LF", () => {
+    const summary = mount({ summary: "Step 1\r\nStep 2\rStep 3\n\nDone" }).find(
+      ".overview-tab__summary",
+    );
+    expect(summary.element.textContent).toBe("Step 1\nStep 2\nStep 3\n\nDone");
+  });
+
+  it("hides the summary when there is none", () => {
+    expect(mount().find(".overview-tab__summary").exists()).toBe(false);
+  });
+});
+
+describe("OverviewTab fact rows", () => {
+  it("shows the parsed version", () => {
+    const text = mount({ version: "CN-07" }).text();
+    expect(text).toContain("rom.version");
+    expect(text).toContain("CN-07");
+  });
+
+  it("hides the version row when there is none", () => {
+    expect(mount().text()).not.toContain("rom.version");
+  });
+});
 
 describe("OverviewTab related games", () => {
   // IGDB has always sent `ports`; the overview dropped them on the floor.

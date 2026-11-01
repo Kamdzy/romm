@@ -35,7 +35,11 @@ from exceptions.fs_exceptions import (
     RomsNotFoundException,
 )
 from logger.logger import log
-from models.base import compute_file_extension, compute_file_name_no_ext
+from models.base import (
+    PICO8_CARTRIDGE_EXTENSION,
+    compute_file_extension,
+    compute_file_name_no_ext,
+)
 from models.platform import Platform
 from models.rom import (
     DOCUMENT_CATEGORIES,
@@ -77,10 +81,6 @@ from .base_handler import (
     normalize_region,
     translation_language,
 )
-
-# PICO-8 cartridges are often stored as PNG files
-PICO8_CARTRIDGE_EXTENSION = ".p8.png"
-
 
 NON_HASHABLE_PLATFORMS = frozenset(
     (
@@ -665,6 +665,8 @@ class FSRomsHandler(FSHandler):
                 entries.append((f_path, file_name, os.stat(Path(f_path, file_name))))
             except OSError as exc:
                 log.warning(f"Skipping unreadable file {f_path / file_name}: {exc}")
+        # Listing order is filesystem-specific; the ROM-level hash must not be.
+        entries.sort(key=lambda e: Path(e[0], e[1]).as_posix())
         return entries
 
     async def converto_active(self, platform_slug: str) -> bool:
