@@ -2,12 +2,14 @@ import json
 from collections.abc import Iterable
 from datetime import datetime
 from io import BytesIO
-from typing import Annotated, Any, TypeVar
+from typing import Annotated, Any, Final, TypeVar
 
 from fastapi import Body, File, Form, HTTPException
 from fastapi import Path as PathVar
 from fastapi import Query, Request, UploadFile, status
 from pydantic import BaseModel as PydanticBaseModel
+from pydantic import TypeAdapter
+from pydantic import ValidationError as PydanticValidationError
 
 from decorators.auth import protected_route
 from endpoints.responses.collection import (
@@ -18,6 +20,7 @@ from endpoints.responses.collection import (
 from endpoints.roms import (
     refresh_affected_smart_collections,
     refresh_scoped_smart_collections,
+    reject_local_file_url,
 )
 from exceptions.endpoint_exceptions import (
     CollectionAlreadyExistsException,
@@ -52,11 +55,11 @@ router = APIRouter(
 )
 
 COLLECTION_ARTWORK_FILE = File(default=None, description="Collection artwork file.")
+ROM_IDS_ADAPTER: Final = TypeAdapter(list[int])
 
 CollectionSchemaT = TypeVar(
     "CollectionSchemaT",
     CollectionSchema,
-    VirtualCollectionSchema,
     SmartCollectionSchema,
 )
 
@@ -111,6 +114,22 @@ def _criteria_collection_id(criteria: object) -> int | None:
     return filters.collection_id if filters else None
 
 
+def _parse_filter_criteria(raw: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid JSON for filter_criteria field",
+        ) from e
+    if not isinstance(parsed, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="filter_criteria must be a JSON object",
+        )
+    return parsed
+
+
 def _check_criteria_collection(
     criteria: object, user_id: int, kept_id: int | None = None
 ) -> None:
@@ -143,6 +162,7 @@ async def add_collection(
     Returns:
         CollectionSchema: Just created collection
     """
+    reject_local_file_url("url_cover", url_cover, None)
     cleaned_data = {
         "name": name,
         "description": description,
@@ -218,14 +238,7 @@ async def add_smart_collection(
     Returns:
         SmartCollectionSchema: Just created smart collection
     """
-    # Parse filter criteria from JSON string
-    try:
-        parsed_filter_criteria = json.loads(filter_criteria)
-    except json.JSONDecodeError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid JSON for filter_criteria field",
-        ) from e
+    parsed_filter_criteria = _parse_filter_criteria(filter_criteria)
     _check_criteria_collection(parsed_filter_criteria, request.user.id)
 
     cleaned_data = {
@@ -319,13 +332,10 @@ def get_virtual_collections(
     """
 
     virtual_collections = db_collection_handler.get_virtual_collections(
-        type=type, limit=limit
+        type=type, limit=limit, visibility=get_rom_visibility_filter(request)
     )
 
-    return _hide_collection_roms(
-        [VirtualCollectionSchema.model_validate(vc) for vc in virtual_collections],
-        request,
-    )
+    return [VirtualCollectionSchema.model_validate(vc) for vc in virtual_collections]
 
 
 @protected_route(router.get, "/virtual/identifiers", [Scope.COLLECTIONS_READ])
@@ -344,6 +354,7 @@ def get_virtual_collection_identifiers(
     virtual_collections = db_collection_handler.get_virtual_collections(
         type="all",
         only_fields=[VirtualCollection.name, VirtualCollection.type],
+        visibility=get_rom_visibility_filter(request),
     )
 
     return [s.id for s in virtual_collections]
@@ -430,13 +441,13 @@ def get_virtual_collection(request: Request, id: str) -> VirtualCollectionSchema
         VirtualCollectionSchema: Virtual collection
     """
 
-    virtual_collection = db_collection_handler.get_virtual_collection(id)
+    virtual_collection = db_collection_handler.get_virtual_collection(
+        id, visibility=get_rom_visibility_filter(request)
+    )
     if not virtual_collection:
         raise CollectionNotFoundInDatabaseException(id)
 
-    return _hide_single_collection_roms(
-        VirtualCollectionSchema.model_validate(virtual_collection), request
-    )
+    return VirtualCollectionSchema.model_validate(virtual_collection)
 
 
 @protected_route(router.get, "/smart/{id}", [Scope.COLLECTIONS_READ])
@@ -492,6 +503,7 @@ async def update_collection(
 
     if collection.user_id != request.user.id:
         raise CollectionPermissionError(id)
+    reject_local_file_url("url_cover", url_cover, collection.url_cover)
 
     if name is not None:
         namesake = db_collection_handler.get_collection_by_name(name, request.user.id)
@@ -499,8 +511,8 @@ async def update_collection(
             raise CollectionAlreadyExistsException(name)
 
     try:
-        parsed_rom_ids = json.loads(rom_ids)
-    except json.JSONDecodeError as e:
+        parsed_rom_ids = ROM_IDS_ADAPTER.validate_json(rom_ids, strict=True)
+    except PydanticValidationError as e:
         raise HTTPException(
             status_code=422,
             detail="Invalid list for rom_ids field in update collection",
@@ -702,11 +714,12 @@ async def remove_roms_from_collection(
     if collection.user_id != request.user.id:
         raise CollectionPermissionError(id)
 
+    # Members hidden from the caller stay, as in update_collection.
+    hidden = _hidden_rom_ids(request, payload.rom_ids)
+    rom_ids = [rid for rid in payload.rom_ids if rid not in hidden]
     before = set(collection.rom_ids)
-    updated_collection = db_collection_handler.remove_roms_from_collection(
-        id, payload.rom_ids
-    )
-    refresh_affected_smart_collections(payload.rom_ids, membership_only=True)
+    updated_collection = db_collection_handler.remove_roms_from_collection(id, rom_ids)
+    refresh_affected_smart_collections(rom_ids, membership_only=True)
     if removed := sorted(before - set(updated_collection.rom_ids)):
         _record_collection(
             request,
@@ -757,13 +770,7 @@ async def update_smart_collection(
     # Parse filter criteria if provided
     parsed_filter_criteria = smart_collection.filter_criteria
     if filter_criteria is not None:
-        try:
-            parsed_filter_criteria = json.loads(filter_criteria)
-        except json.JSONDecodeError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid JSON for filter_criteria field",
-            ) from e
+        parsed_filter_criteria = _parse_filter_criteria(filter_criteria)
         # The form resends the stored scope on every edit; the ROM filters
         # already match nothing for one the owner has since lost.
         _check_criteria_collection(
