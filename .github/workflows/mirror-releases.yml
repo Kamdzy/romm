@@ -22,8 +22,13 @@ jobs:
 
       - name: Get latest upstream release
         id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -s https://api.github.com/repos/rommapp/romm/releases/latest > "$RUNNER_TEMP/upstream-release.json"
+          # -f fails on an HTTP error, so a rate-limit reply can't become a "null" tag
+          curl -fsS --retry 3 --retry-all-errors --retry-delay 10 \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            https://api.github.com/repos/rommapp/romm/releases/latest > "$RUNNER_TEMP/upstream-release.json"
 
           UPSTREAM_RELEASE=$(jq -r '.tag_name' "$RUNNER_TEMP/upstream-release.json")
           echo "Latest upstream release: $UPSTREAM_RELEASE"
