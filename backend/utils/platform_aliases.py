@@ -17,7 +17,7 @@ PLATFORM_FS_ALIASES: Final[dict[str, UPS]] = {
     "amiga500": UPS.AMIGA,
     "amiga600": UPS.AMIGA,
     "amigacd32": UPS.AMIGA_CD32,
-    "amigacdtv": UPS.AMIGA_CD32,
+    "amigacdtv": UPS.COMMODORE_CDTV,
     "amstradcpc": UPS.ACPC,
     "apfm1000": UPS.APF,
     "apple2": UPS.APPLEII,
@@ -115,8 +115,6 @@ PLATFORM_FS_ALIASES: Final[dict[str, UPS]] = {
     "segastv": UPS.STV,
     "sfc": UPS.SFAM,
     "sg-1000": UPS.SG1000,
-    "sgb": UPS.GBC,
-    "sgb-msu1": UPS.GBC,
     "snes-msu1": UPS.SNES,
     "sufami": UPS.SUFAMI_TURBO,
     "supracan": UPS.SUPER_ACAN,
@@ -173,6 +171,16 @@ def _to_slug(name: str) -> str:
         return key
     alias = PLATFORM_FS_ALIASES.get(key)
     return alias.value if alias else name
+
+
+def resolve_builtin_platform_slug(fs_slug: str) -> str | None:
+    """Resolve a folder name to a platform slug by its name or built-in alias.
+
+    Returns:
+        The platform slug, or None when the folder needs a config mapping.
+    """
+    slug = _to_slug(fs_slug)
+    return slug if slug in UPS else None
 
 
 def resolve_platform_slug(fs_slug: str, config: Config) -> str:
