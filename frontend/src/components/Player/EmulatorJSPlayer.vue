@@ -278,6 +278,7 @@ applyEjsGlobals(
     bios: props.bios,
     firmware: props.firmware,
     loadStateLabel: props.loadStateLabel,
+    emulation: heartbeatStore.value.EMULATION,
     config: configStore.config,
     coreOptions: (core) => configStore.getEJSCoreOptions(core),
     controls: configStore.getEJSControls(props.core),
@@ -682,6 +683,7 @@ window.EJS_onSaveState = async function ({
     rom: romRef.value,
     stateFile,
     screenshotFile,
+    deviceId: deviceIDRef.value,
   });
   window.EJS_emulator.storage.states.put(
     window.EJS_emulator.getBaseFileName() + ".state",
@@ -825,7 +827,12 @@ window.EJS_onGameStart = async () => {
     // Different endpoints, so both go at once. The save takes the frame just
     // captured unless the server already holds these bytes with their own.
     await Promise.all([
-      saveState({ rom: romRef.value, stateFile, screenshotFile }),
+      saveState({
+        rom: romRef.value,
+        stateFile,
+        screenshotFile,
+        deviceId: deviceIDRef.value,
+      }),
       saveFile?.byteLength
         ? writeSaveIfChanged({
             saveFile: toArrayBuffer(saveFile),

@@ -72,7 +72,9 @@ import {
 import firmwareApi from "@/services/api/firmware";
 import romApi from "@/services/api/rom";
 import { AUTOSAVE_SLOT, SAVE_SLOT_MAX_LENGTH } from "@/services/api/save";
+import storeAuth from "@/stores/auth";
 import storeConfig from "@/stores/config";
+import storeHeartbeat from "@/stores/heartbeat";
 import { useNativeStore } from "@/stores/native";
 import type { DetailedRom } from "@/stores/roms";
 import type { Events } from "@/types/emitter";
@@ -111,6 +113,7 @@ import {
   slotForSave,
   type SlotChoice,
 } from "@/utils/saveSlots";
+import { cachedBrowserDeviceId } from "@/utils/saveSync/browserDevice";
 import { isJsResource, loadScript } from "@/utils/scriptLoader";
 import { exitEmulatorOnce } from "@/views/Player/emulatorJSRuntime";
 import { rememberCore, resolveRememberedCore } from "./coreStorage";
@@ -137,7 +140,9 @@ const Player = defineAsyncComponent(
 const { t, locale } = useI18n();
 const snackbar = useSnackbar();
 const emitter = inject<Emitter<Events>>("emitter");
+const authStore = storeAuth();
 const configStore = storeConfig();
+const heartbeatStore = storeHeartbeat();
 const nativeStore = useNativeStore();
 const { fullscreenOnPlay } = useFullscreenPref();
 useFullscreenFallback();
@@ -161,6 +166,7 @@ const supportedCores = computed<string[]>(() =>
     ? [
         ...getSupportedEJSCores(
           rom.value.platform_slug,
+          heartbeatStore.value.EMULATION,
           configStore.config.EJS_NETPLAY_ENABLED,
         ),
       ]
@@ -556,6 +562,11 @@ watch(selectedCore, (newSelectedCore) => {
   if (armed?.emulator && armed.emulator !== newSelectedCore) unselectState();
 });
 
+function thisDeviceId(): string | null {
+  const userId = authStore.user?.id;
+  return userId == null ? null : cachedBrowserDeviceId(userId);
+}
+
 // A native launch moves saves on the server's side of this page, so the rom
 // fetched on mount goes stale. Re-read it: it carries the save list.
 async function refreshRomAfterSync(): Promise<void> {
@@ -565,6 +576,7 @@ async function refreshRomAfterSync(): Promise<void> {
     resume.value = defaultResumeSelection(
       data.user_saves,
       compatibleStates.value,
+      thisDeviceId(),
     );
     slotChoice.value = existingSlot(preferredSlot(data.user_saves));
     isSavesTabSelected.value = !resume.value.state;
@@ -612,6 +624,7 @@ onMounted(async () => {
   resume.value = defaultResumeSelection(
     rom.value.user_saves,
     compatibleStates.value,
+    thisDeviceId(),
   );
   slotChoice.value = existingSlot(preferredSlot(rom.value.user_saves));
   isSavesTabSelected.value = !resume.value.state;
@@ -732,6 +745,7 @@ const newerAsset = computed(() =>
     rom.value?.user_saves ?? [],
     compatibleStates.value,
     resume.value,
+    thisDeviceId(),
   ),
 );
 function bootFromNewer() {
