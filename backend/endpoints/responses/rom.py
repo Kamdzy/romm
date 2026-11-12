@@ -37,6 +37,7 @@ from handler.metadata.pouet_handler import PouetMetadata
 from handler.metadata.ra_handler import RAMetadata
 from handler.metadata.ss_handler import SSMetadata
 from handler.metadata.steam_handler import SteamMetadata
+from handler.scan.sources import SCAN_CLAIMS_KEY
 from models.collection import Collection, SmartCollection
 from models.rom import (
     PROVIDER_METADATA_COLUMNS,
@@ -51,6 +52,7 @@ from models.rom import (
 )
 from utils.conversion_cache import offered_download_formats
 from utils.facets import facet_names
+from utils.rom_patcher import is_patch_file_name
 
 from .base import BaseModel, UTCDatetime
 
@@ -208,6 +210,7 @@ def clean_metadata_name_lists(
     return {
         key: facet_names(value) if key in keys and value is not None else value
         for key, value in metadata.items()
+        if key != SCAN_CLAIMS_KEY
     }
 
 
@@ -321,7 +324,10 @@ class RomFileSchema(BaseModel):
 
     @model_validator(mode="after")
     def default_category_for_non_nested(self) -> RomFileSchema:
-        if self.category is None and self.is_top_level:
+        # Rows scanned before patch formats were classified still carry their folder's.
+        if is_patch_file_name(self.file_name):
+            self.category = RomFileCategory.PATCH
+        elif self.category is None and self.is_top_level:
             self.category = RomFileCategory.GAME
         return self
 

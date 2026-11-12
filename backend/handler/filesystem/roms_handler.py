@@ -71,6 +71,7 @@ from utils.filesystem import (
 )
 from utils.hashing import crc32_to_hex
 from utils.platform_slugs import UniversalPlatformSlug as UPS
+from utils.rom_patcher import is_patch_file_name
 
 from .base_handler import (
     LANGUAGES_BY_SHORTCODE,
@@ -234,7 +235,8 @@ def _make_file_hash(
 GENERIC_TAG_REGEX = re.compile(r"\(([^)]+)\)|\[([^]]+)\]")
 VERSION_TAG_REGEX = re.compile(r"^(?:version|ver|v)(?:[\s._-](.*)|([.\d].*))", re.I)
 REGION_TAG_REGEX = re.compile(r"^reg[\s|-](.*)$", re.I)
-REVISION_TAG_REGEX = re.compile(r"^rev[\s|-](.*)$", re.I)
+# GoodTools writes a revision with no separator, as "(REV01)".
+REVISION_TAG_REGEX = re.compile(r"^rev(?:[\s|-](.*)|(\d.*))$", re.I)
 
 # A fan translation, as GoodTools ("[T+Eng1.1_RPGe]"), TOSEC ("[tr fr]") and
 # plainer sets ("(Translation)") write it. Anchored, so "Trainer" is not one.
@@ -566,7 +568,7 @@ class FSRomsHandler(FSHandler):
             # Revision prefix
             revision_match = REVISION_TAG_REGEX.match(raw_tag)
             if revision_match:
-                revision = revision_match[1]
+                revision = revision_match[1] or revision_match[2] or ""
                 continue
 
             # Anything else
@@ -621,6 +623,15 @@ class FSRomsHandler(FSHandler):
         )
         return category_for_path_parts(list(map(str.lower, rom_relative_parts)))
 
+    @classmethod
+    def _file_category(
+        cls, rom: Rom, rom_path: Path, file_name: str
+    ) -> RomFileCategory | None:
+        """A patch format is a patch in any folder; anything else takes its folder's category."""
+        if is_patch_file_name(file_name):
+            return RomFileCategory.PATCH
+        return cls._folder_category(rom, rom_path)
+
     def _build_rom_file(
         self,
         rom: Rom,
@@ -632,7 +643,7 @@ class FSRomsHandler(FSHandler):
         archive_members: list[dict[str, Any]] | None = None,
     ) -> RomFile:
         abs_file_path = Path(self.base_path, rom_path, file_name)
-        matching_category = self._folder_category(rom, rom_path)
+        matching_category = self._file_category(rom, rom_path, file_name)
 
         track_meta = None
         if matching_category == RomFileCategory.SOUNDTRACK:
@@ -906,7 +917,7 @@ class FSRomsHandler(FSHandler):
                 ):
                     # Title id extraction below may settle a content category.
                     stored_categories[id(row)] = row.category
-                    row.category = self._folder_category(rom, rel_dir)
+                    row.category = self._file_category(rom, rel_dir, row.file_name)
                     rom_files.append(row)
                     _record_title_id_source(abs_file_path, row)
                     continue

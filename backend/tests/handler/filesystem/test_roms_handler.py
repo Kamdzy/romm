@@ -255,6 +255,20 @@ class TestFSRomsHandler:
         parsed_tags = handler.parse_tags(fs_name)
         assert parsed_tags.version == "2"
 
+    def test_parse_tags_revision_without_separator(self, handler: FSRomsHandler):
+        """GoodTools writes a revision with no separator, as "(REV01)"."""
+        parsed_tags = handler.parse_tags("Sonic The Hedgehog (W) (REV01) [!].gen")
+        assert parsed_tags.revision == "01"
+        assert parsed_tags.other_tags == ["!"]
+
+        assert handler.parse_tags("Game (USA) (Rev1).rom").revision == "1"
+        assert handler.parse_tags("Game (USA) (Rev1.1).rom").revision == "1.1"
+
+        # Only a digit right after "Rev" makes it a revision.
+        parsed_tags = handler.parse_tags("Game (Revenge) (RevB).rom")
+        assert parsed_tags.revision == ""
+        assert parsed_tags.other_tags == ["Revenge", "RevB"]
+
     def test_parse_tags_non_version_tags_starting_with_v(self, handler: FSRomsHandler):
         """Test parse_tags keeps non-version tags starting with v as generic tags"""
         fs_name = "Rom [2026] [Variation].rom"
@@ -653,6 +667,27 @@ class TestFSRomsHandler:
             # Clean up
             if test_file.exists():
                 test_file.unlink()
+
+    @pytest.mark.parametrize("folder", ["", "translations"])
+    def test_build_rom_file_files_a_patch_format_as_a_patch(
+        self, rom_multi: Rom, handler: FSRomsHandler, folder: str
+    ):
+        rom_path = Path(rom_multi.full_path, folder)
+        file_name = "Game (T-Es).UPS"
+        os.makedirs(handler.base_path / rom_path, exist_ok=True)
+        test_file = handler.base_path / rom_path / file_name
+        test_file.write_bytes(b"UPS1")
+        file_hash = FileHash(
+            {"crc_hash": "", "md5_hash": "", "sha1_hash": "", "chd_sha1_hash": ""}
+        )
+
+        try:
+            rom_file = handler._build_rom_file(
+                rom_multi, rom_path, file_name, file_hash
+            )
+            assert rom_file.category == RomFileCategory.PATCH
+        finally:
+            test_file.unlink()
 
     @pytest.mark.asyncio
     async def test_get_roms(self, handler: FSRomsHandler, platform, config):
@@ -3508,7 +3543,8 @@ class TestIncrementalRomFiles:
 
         new = next(f for f in parsed.rom_files if f.file_name == "new.ips")
         assert new.file_path == f"{self.ROM_DIR}/hack/v2"
-        assert new.category == RomFileCategory.HACK
+        # A patch format is a patch whatever folder it sits in.
+        assert new.category == RomFileCategory.PATCH
         assert (
             new.md5_hash == hashlib.md5(b"new patch", usedforsecurity=False).hexdigest()
         )
